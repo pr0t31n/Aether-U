@@ -1,0 +1,45 @@
+{
+  "rtls_host": "",
+  "rtls_port": 443,
+  "rtls_platform": "sewio",
+  "mqtt_host": "",
+  "mqtt_port": 1883,
+  "mqtt_topics": ["#"],
+  "target_anchors": [],
+  "target_tags": [],
+  "gnuradio_device": "driver=hackrf",
+  "uwb_channel": 5,
+  "uwb_prf": 64,
+  "timeout_per_phase": 300,
+  "capture_duration": 1800,
+  "phases": {
+    "survey": true,
+    "protocol_analysis": true,
+    "active_interaction": true,
+    "physical_attacks": false,
+    "network_app": true
+  },
+  "tools": {
+    "nmap": "nmap",
+    "mosquitto_sub": "mosquitto_sub",
+    "mosquitto_pub": "mosquitto_pub",
+    "sqlmap": "sqlmap",
+    "tshark": "tshark",
+    "gnuradio-companion": "gnuradio-companion",
+    "python3": "python3",
+    "curl": "curl"
+  },
+  "scope": {
+    "hosts": [],
+    "eui64s": []
+  },
+  "credentials": {
+    "username": "admin",
+    "password": "admin"
+  },
+  "output_dir": "aether_u_output",
+  "physical_access": false,
+  "injection_authorized": false,
+  "dos_authorized": false,
+  "active_testing_authorized": false
+}

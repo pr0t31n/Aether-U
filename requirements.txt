@@ -1,0 +1,12 @@
+# Aether-U — UWB / RTLS Penetration Test Orchestrator
+# Requirements
+#
+# Most tooling is system-level (nmap, tshark, mosquitto-clients, sqlmap).
+# Install system dependencies with:  sudo python3 install.py
+#
+# The Python package below is OPTIONAL — Aether-U uses mosquitto_sub /
+# mosquitto_pub subprocesses by default so that no Python MQTT library is
+# strictly required.  Install paho-mqtt if you want scripted MQTT sessions
+# directly from Python helper scripts or custom extensions.
+
+paho-mqtt>=1.6.0    # optional — MQTT client library for Python scripting

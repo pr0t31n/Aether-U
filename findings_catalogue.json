@@ -1,0 +1,156 @@
+{
+  "version": "1.0.0",
+  "tool": "Aether-U",
+  "findings": [
+    {
+      "id": "AETHU-001",
+      "title": "Ghost Peak Distance Reduction Attack",
+      "severity": "CRITICAL",
+      "cvss_score": 9.2,
+      "cvss_vector": "CVSS:3.1/AV:A/AC:H/PR:N/UI:N/S:C/C:H/I:H/A:N",
+      "category": "Physical Layer Attack",
+      "description": "The Ghost Peak attack is a physical-layer distance reduction attack targeting IEEE 802.15.4z HRP UWB ranging. An attacker positioned within RF range injects an early leading pulse into the Two-Way Ranging (TWR) exchange, causing the victim receiver to latch onto the injected pulse rather than the authentic signal, thereby reporting a measured distance significantly shorter than the true physical separation. This attack succeeds without breaking any cryptographic mechanism and was demonstrated to work against DW1000 and DW3000 chip families in published research from 2022. Affected systems include Apple AirTag-like access control implementations, automotive CCC Digital Key systems, and any RTLS deploying HRP UWB without pulse-shape authentication. The consequence is that physical access controls relying on UWB proximity can be bypassed entirely — for example, a vehicle keyless entry system can be unlocked from tens of meters away while the chip reports centimetre-level proximity.",
+      "remediation": "Apply firmware patches from DecaWave/Qorvo that enable STS (Scrambled Timestamp Sequence) integrity checking in IEEE 802.15.4z SP3 mode, which hardens against early-pulse injection by cryptographically authenticating the leading edge timestamp. Require the STS mode to be enforced on all ranging sessions and reject sessions negotiated in legacy SP0 mode. Supplement ranging with additional physical sensors (e.g., NFC tap confirmation) for high-security access control scenarios. Monitor chip vendor advisories (Qorvo DW3000 series) and apply firmware updates as they are released."
+    },
+    {
+      "id": "AETHU-002",
+      "title": "RTLS Management Console Default Credentials",
+      "severity": "CRITICAL",
+      "cvss_score": 9.8,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H",
+      "category": "Authentication",
+      "description": "The RTLS management console (Sewio RTLS Studio, Pozyx Creator, or equivalent) is accessible with factory-default credentials such as admin/admin, admin/sewio, or admin/pozyx. Default credentials are frequently left unchanged during deployment as operators rely on network segmentation rather than strong authentication. An unauthenticated remote attacker who can reach the management interface over the network gains full administrative control of the RTLS infrastructure, including the ability to modify anchor configurations, alter zone boundaries, extract all tracked position data, and inject false location records. This vulnerability has a trivially low attack complexity and requires no prior knowledge of the target environment beyond the platform type.",
+      "remediation": "Immediately change all default credentials to unique, randomly generated passwords of at least 16 characters. Implement account lockout after 5 failed login attempts and enforce MFA where the platform supports it. Restrict the management console to a dedicated administrative VLAN with access limited to specific administrator workstations via firewall ACLs. Audit all vendor-supplied accounts and disable or remove any service accounts that are not operationally required."
+    },
+    {
+      "id": "AETHU-003",
+      "title": "Unauthenticated MQTT Broker",
+      "severity": "HIGH",
+      "cvss_score": 8.6,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:N",
+      "category": "Authentication",
+      "description": "The MQTT broker used by the RTLS platform accepts connections on TCP port 1883 without requiring a username or password, exposing a full publish/subscribe channel to any network-accessible client. Real-time position data for all tracked tags — including tag IDs, X/Y/Z coordinates, zone assignments, velocity vectors, and floor-plan identifiers — is streamed continuously over unauthenticated MQTT topics. An attacker who connects to the broker gains complete visibility into the physical location of every tracked person or asset in real time, enabling surveillance, operational intelligence gathering, and targeted physical attacks. Additionally, unauthenticated write access to the broker allows injection of fabricated position updates that will be consumed by downstream business applications.",
+      "remediation": "Enable MQTT broker authentication by requiring a username and password for all client connections; configure Mosquitto or the embedded broker to reject anonymous connections. Migrate all RTLS MQTT traffic to TLS-encrypted port 8883 using certificates issued by an internal CA. Implement MQTT ACL (Access Control List) rules that restrict each client to only the topics it legitimately needs to publish or subscribe. Regularly audit active MQTT client sessions and broker configuration."
+    },
+    {
+      "id": "AETHU-004",
+      "title": "RTLS Position Data Injection via MQTT",
+      "severity": "HIGH",
+      "cvss_score": 8.1,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:N/I:H/A:H",
+      "category": "Injection",
+      "description": "When the MQTT broker lacks authentication (or when credentials are weak and obtainable), an attacker can publish arbitrary JSON position payloads to RTLS position topics, causing the RTLS engine to process and display fabricated location data as if it originated from legitimate anchors. This allows an attacker to teleport tracked tags to arbitrary zones, trigger false zone-entry or zone-exit alarms, suppress the displayed location of real tags by flooding with conflicting updates, and manipulate safety-critical zone occupancy decisions in industrial or healthcare environments. If the RTLS feeds a physical access control system or a hazardous zone safety interlock, injected positions can result in direct safety consequences.",
+      "remediation": "Require MQTT broker authentication and deploy publisher-side ACLs that restrict position topic publishing to anchor gateways only — no external client should be able to publish to position update topics. Implement message signature validation on the RTLS engine so that position payloads include an HMAC computed with an anchor-specific key, and reject any payload whose signature does not validate. Audit RTLS business logic for safety-critical zone enforcement and add secondary sensor confirmation before triggering safety interlocks."
+    },
+    {
+      "id": "AETHU-005",
+      "title": "SQL Injection in RTLS Reporting Module",
+      "severity": "HIGH",
+      "cvss_score": 8.5,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:N",
+      "category": "Injection",
+      "description": "The RTLS web platform contains SQL injection vulnerabilities in reporting and analytics endpoints where user-supplied parameters (date ranges, tag IDs, zone names, report filters) are interpolated directly into database queries without parameterisation or sanitisation. An authenticated attacker with low-privilege access to the reporting interface can extract the full database including historical position data, user credentials, API tokens, and configuration secrets via UNION-based or blind SQL injection. In environments where the RTLS database account has file-system privileges, the attacker may read operating system files or write web shells to achieve remote code execution on the database server.",
+      "remediation": "Replace all dynamic SQL string construction with parameterised queries or prepared statements using the ORM or database driver's native placeholder syntax. Apply the principle of least privilege to the RTLS database account — it should have no FILE or SUPER privileges and should access only the RTLS schema. Deploy a web application firewall (WAF) with SQL injection detection rules as a defence-in-depth measure. Conduct a full code review of all user-facing query parameters and implement input validation that rejects unexpected characters."
+    },
+    {
+      "id": "AETHU-006",
+      "title": "Unauthenticated RTLS REST API Endpoints",
+      "severity": "HIGH",
+      "cvss_score": 7.5,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "category": "Authentication",
+      "description": "Multiple REST API endpoints in the RTLS management platform are accessible without any authentication token or session cookie. Unauthenticated callers can enumerate all anchor hardware configurations (including firmware versions and network addressing), retrieve full tag inventories with their last known positions, and query zone boundary definitions and floor-plan metadata. This information directly enables further attacks by revealing the physical layout of the tracked environment, identifying anchor IPs and firmware versions susceptible to known CVEs, and confirming the topology of the UWB infrastructure prior to a targeted attack.",
+      "remediation": "Implement authentication middleware that enforces a valid API token or session token on all REST API routes; return HTTP 401 for any unauthenticated request. Apply role-based access control so that read-only API tokens cannot invoke configuration-modifying endpoints. Audit the full API surface using OpenAPI/Swagger documentation against the actual route handlers to identify any routes that bypass the authentication middleware. Ensure the API is not exposed to untrusted network segments."
+    },
+    {
+      "id": "AETHU-007",
+      "title": "UWB STS Key Weakness",
+      "severity": "HIGH",
+      "cvss_score": 7.8,
+      "cvss_vector": "CVSS:3.1/AV:A/AC:H/PR:N/UI:N/S:C/C:H/I:H/A:N",
+      "category": "Cryptography",
+      "description": "The Scrambled Timestamp Sequence (STS) used by IEEE 802.15.4z HRP UWB to authenticate ranging frames is derived from a session-level key that may be poorly seeded, statically configured, or exposed via the RTLS management API. When the STS key derivation is weak — for example, using a predictable seed derived from the tag EUI-64 or a static factory-provisioned value — an attacker who captures sufficient ranging exchanges can recover the STS key and forge authenticated ranging responses, making the distance-reduction attack resilient even against platforms that believe STS provides full protection. This finding applies to firmware versions that implement STS key management outside the secure element, or that expose STS configuration parameters over the RTLS API.",
+      "remediation": "Ensure STS keys are derived from a cryptographically random 128-bit seed generated inside a hardware secure element and never exposed via any management API or diagnostic interface. Rotate STS session keys per-ranging-session using a cryptographically strong key derivation function (e.g., HKDF-SHA256) with a fresh nonce. Audit RTLS API responses to confirm that no STS key material, seed values, or counter states are returned. Apply firmware updates from the chip vendor that implement IEEE 802.15.4z STS key management in the secure enclave."
+    },
+    {
+      "id": "AETHU-008",
+      "title": "Cleartext UWB Ranging Exchange",
+      "severity": "MEDIUM",
+      "cvss_score": 6.5,
+      "cvss_vector": "CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "category": "Cryptography",
+      "description": "UWB ranging frames (Poll, Response, Final) are transmitted in IEEE 802.15.4z SP0 mode without STS or payload encryption, making the full ranging exchange observable to any attacker with appropriate RF hardware within range. Captured frames reveal tag and anchor EUI-64 addresses, sequence numbers, timing fields, and any application payload appended to the ranging frame. This exposure enables an attacker to map the UWB topology, identify specific tags of interest (such as those carried by executive personnel or used for vehicle access), build a model of normal ranging behaviour for replay or manipulation attacks, and correlate UWB addresses with physical identity if the RTLS system maps tag IDs to personnel records.",
+      "remediation": "Configure all UWB devices to operate in IEEE 802.15.4z SP3 mode with STS enabled to provide authenticated timestamps and prevent frame-level eavesdropping of the ranging exchange metadata. Where SP3 is not available on legacy hardware, enable application-layer payload encryption and minimise identifying information in ranging frame payloads. Segment UWB traffic to the minimum required RF coverage area and use directional antennas to reduce unintended RF leakage beyond the operational boundary."
+    },
+    {
+      "id": "AETHU-009",
+      "title": "RTLS Anchor Firmware Update Without Signature Verification",
+      "severity": "HIGH",
+      "cvss_score": 7.9,
+      "cvss_vector": "CVSS:3.1/AV:A/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:H",
+      "category": "Firmware",
+      "description": "The RTLS anchor firmware update mechanism accepts firmware images submitted via the management API or a dedicated OTA update endpoint without cryptographically verifying the image signature against a vendor-controlled public key. An attacker with network access to the RTLS management interface and low-privilege credentials (or no credentials if the API is unauthenticated) can submit a crafted firmware image to any or all anchors, replacing the legitimate firmware with a malicious version that modifies ranging behaviour, exfiltrates UWB frame data, disrupts positioning, or establishes persistent backdoor access to anchor hardware. Because anchors run continuously and are often physically inaccessible, compromised firmware may persist undetected for extended periods.",
+      "remediation": "Implement mandatory cryptographic signature verification on all firmware images prior to installation; the verification key should be stored in anchor hardware (e.g., a one-time-programmable fuse or secure element) and should not be overridable via software. Require HTTPS and strong API authentication for all firmware update endpoints. Implement a firmware version manifest with expected hash values that the anchor compares against the received image before flashing. Add firmware attestation capabilities so the RTLS platform can detect unexpected firmware version changes across the anchor fleet."
+    },
+    {
+      "id": "AETHU-010",
+      "title": "MQTT Cleartext Credential Transmission",
+      "severity": "MEDIUM",
+      "cvss_score": 6.8,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "category": "Cryptography",
+      "description": "MQTT clients connecting to the RTLS broker transmit credentials (username and password) in cleartext over TCP port 1883 without TLS encryption. Any attacker with the ability to perform network interception — via ARP spoofing, a compromised network switch, or proximity to a wireless access point carrying the RTLS traffic — can capture CONNECT packets and extract credentials in plaintext using standard tools such as Wireshark or tshark. Captured credentials can be replayed to gain authenticated access to the MQTT broker, or may be tested against other services if credential reuse is present across the RTLS platform.",
+      "remediation": "Migrate all MQTT communication to TLS-encrypted port 8883 using a certificate chain rooted in an internal CA. Disable plaintext port 1883 at the broker configuration level and ensure firewall rules block external access to it. Rotate all MQTT credentials that have been transmitted in cleartext and treat them as compromised. Implement certificate pinning on MQTT clients where supported to prevent interception via rogue CA attacks."
+    },
+    {
+      "id": "AETHU-011",
+      "title": "RTLS Zone Boundary Bypass",
+      "severity": "HIGH",
+      "cvss_score": 7.6,
+      "cvss_vector": "CVSS:3.1/AV:A/AC:H/PR:N/UI:N/S:C/C:N/I:H/A:N",
+      "category": "Logic Flaw",
+      "description": "By combining the Ghost Peak distance reduction technique (AETHU-001) with knowledge of zone boundary geometry extracted from the RTLS management API (AETHU-006), an attacker can manipulate the measured distances between a tag and surrounding anchors in a coordinated manner such that the RTLS location engine calculates a tag position inside an authorised zone while the tag carrier is physically located outside of it. This zone spoofing attack allows an attacker to trigger zone-entry events without physical presence in the zone, bypass zone-based access control logic (e.g., automated door unlocking triggered by zone occupancy), and disable zone-exit alerts for personnel who have physically departed a restricted area.",
+      "remediation": "Implement multi-anchor consistency checks that flag ranging results where the set of anchor distances does not geometrically converge within an expected error bound; anomalous trilateration inputs should trigger an alert rather than producing a position estimate. Augment UWB-based zone enforcement with complementary access control mechanisms (e.g., badge readers, PIN pads, or video verification) that must all confirm authorisation independently. Enable STS mode on all anchors to mitigate the underlying Ghost Peak attack vector. Define conservative zone boundaries with a safety margin that accounts for the maximum expected ranging error."
+    },
+    {
+      "id": "AETHU-012",
+      "title": "Anchor RF Flooding / Denial of Service",
+      "severity": "MEDIUM",
+      "cvss_score": 5.8,
+      "cvss_vector": "CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:C/C:N/I:N/A:H",
+      "category": "Denial of Service",
+      "description": "The UWB channel used by the RTLS anchors can be saturated with high-rate UWB pulse transmissions from an attacker-controlled RF source (e.g., a custom firmware DWM3000EVB or SDR with UWB frontend), preventing legitimate ranging exchanges from completing and causing the RTLS system to lose position data for all tags within the affected coverage area. During a DoS condition the RTLS engine reports tags as lost or stationary at their last known position, which can disable safety alarms, automated zone logic, and personnel tracking. This finding requires physical proximity to the target environment and the use of appropriate RF transmission equipment. NOTE: This test requires explicit dos_authorized=true in the configuration and appropriate RF authorisation from the client.",
+      "remediation": "Deploy UWB hardware that supports channel agility and can automatically switch to an alternative UWB channel (as defined in IEEE 802.15.4z) when interference is detected. Implement RTLS application-level monitoring that alerts operators when anchor-to-tag ranging failure rates exceed a threshold, indicating potential RF interference or DoS. Define an operational procedure for switching to a backup positioning method (Wi-Fi RTT, BLE triangulation) if UWB becomes unavailable. Physically secure the RF environment by using appropriate shielding and minimising UWB signal leakage beyond the operational perimeter."
+    },
+    {
+      "id": "AETHU-013",
+      "title": "RTLS Cross-Site Scripting (XSS) in Dashboard",
+      "severity": "MEDIUM",
+      "cvss_score": 6.1,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:R/S:C/C:L/I:L/A:N",
+      "category": "Injection",
+      "description": "The RTLS web dashboard reflects tag label values and custom metadata fields into the HTML page without adequate output encoding, enabling stored cross-site scripting attacks. An attacker who can write a tag label (via the management API or by injecting data through the MQTT broker) can insert a malicious script payload that executes in the browser of any RTLS operator who views the dashboard or tag detail page. Successful XSS enables session cookie theft, credential harvesting via overlay login forms, lateral movement to other web applications accessible from the operator's browser, and persistent dashboard manipulation that misleads operators about system state.",
+      "remediation": "Apply strict HTML output encoding (using a context-aware escaping library such as OWASP Java Encoder or equivalent) to all dynamic values rendered in the dashboard, including tag labels, zone names, anchor aliases, and custom metadata fields. Implement a Content Security Policy (CSP) header that disallows inline scripts and restricts script sources to the application's own origin. Sanitise all API-sourced string fields before storage using an allowlist of permitted characters appropriate to the field type (e.g., alphanumeric plus limited punctuation for tag labels)."
+    },
+    {
+      "id": "AETHU-014",
+      "title": "Insecure Direct Object Reference in RTLS API",
+      "severity": "MEDIUM",
+      "cvss_score": 6.5,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N",
+      "category": "Access Control",
+      "description": "The RTLS REST API uses sequential integer or predictable UUID identifiers for sensor records, tags, and user accounts, and does not enforce ownership or role checks when these identifiers are accessed by authenticated but low-privilege users. An attacker with any valid API credential can iterate over sensor IDs, tag IDs, and user profile IDs to retrieve configuration and location data belonging to other RTLS users or system components. In multi-tenant RTLS deployments this constitutes a cross-tenant data breach; in single-tenant deployments it allows a low-privilege operator to access administrator-level sensor configurations and historical position records without the required privilege level.",
+      "remediation": "Implement server-side authorisation checks on every API endpoint that accesses an object by ID, validating that the authenticated user has the required role or ownership relationship to access the requested object. Use cryptographically random UUIDs instead of sequential integers for resource identifiers to eliminate predictable enumeration, while recognising that random IDs are a defence-in-depth measure and not a substitute for proper authorisation logic. Conduct a full audit of RTLS API routes against the intended access control matrix."
+    },
+    {
+      "id": "AETHU-015",
+      "title": "Physical UWB Frame Injection",
+      "severity": "HIGH",
+      "cvss_score": 7.4,
+      "cvss_vector": "CVSS:3.1/AV:A/AC:H/PR:N/UI:N/S:C/C:N/I:H/A:N",
+      "category": "Physical Layer Attack",
+      "description": "An attacker with physical access to the RF environment and an RF injection-capable device (e.g., a second DWM3000EVB with custom firmware, or a Software Defined Radio with UWB-capable frontend) can transmit forged IEEE 802.15.4z frames that impersonate legitimate anchors, injecting false ranging responses into the Two-Way Ranging exchange. When the RTLS engine processes ranging results that include injected forged anchor responses alongside legitimate ones, the trilateration calculation produces a position estimate displaced from the tag's true location. This attack can be used to systematically move perceived tag positions into or out of authorised zones, generate false alarms, or mask the movement of assets through restricted areas. This finding requires physical_access and injection_authorized to be enabled in the configuration. NOTE: Full execution requires specialised hardware operating under explicit RF testing authorisation.",
+      "remediation": "Enable IEEE 802.15.4z STS (SP3 mode) on all anchors and tags to cryptographically authenticate ranging frame timestamps; forged frames without the correct STS cannot produce consistent time-of-flight measurements that pass integrity checks. Implement anchor-to-anchor cross-validation where each anchor computes expected ranging windows for neighbouring anchors and flags unexpected ranging responses from unknown sources. Deploy RF anomaly detection that identifies transmission power levels, pulse repetition frequencies, or ranging schedules inconsistent with the commissioned anchor configuration. Physically secure anchor hardware to prevent tampering with antenna orientation or co-location of rogue devices."
+    }
+  ]
+}
