@@ -25,7 +25,7 @@ Usage:
 """
 from __future__ import annotations
 
-VERSION = "1.0.3"
+VERSION = "1.1.0"
 
 import argparse
 import json
@@ -1278,27 +1278,62 @@ def _phase_physical_attacks(cfg: dict, project_dir: Path) -> None:
                     body, re.I
                 ):
                     version_str = m.group(1)
-                    # DW1000 firmware known vulnerable versions: < 16.01.00
-                    # DW3000 SP0 mode is vulnerable regardless of firmware version
+                    # 2026-06-11 review FP fix: prior code marked any DW1000
+                    # OR DW3000 chip as "vulnerable" purely on chip detection.
+                    # That's wrong — DW3000 in SP3 mode is NOT vulnerable to
+                    # Ghost Peak, and even DW1000 requires SP0/short-STS mode.
+                    # Gate the emission on explicit STS-mode evidence in the
+                    # response body. When mode is undetermined, label the
+                    # finding as Tentative rather than Certain.
                     is_vulnerable = False
                     chip_guess = "unknown"
+                    sts_mode  = "unknown"
+                    confidence = "Tentative"
+                    # Look for STS mode markers in surrounding response
+                    _sts_evidence = body[:1500].lower()
+                    if any(m in _sts_evidence for m in
+                            ("sp0_mode","sp_mode\":0","sts_disabled","\"sts\":false",
+                             "short_sts","mode\":\"sp0\"")):
+                        sts_mode  = "SP0"
+                        is_vulnerable = True
+                        confidence = "Certain"
+                    elif any(m in _sts_evidence for m in
+                              ("sp3_mode","sp_mode\":3","sts_enabled","\"sts\":true",
+                               "mode\":\"sp3\"","full_sts")):
+                        sts_mode  = "SP3"
+                        is_vulnerable = False
+                        confidence = "Certain"
                     if re.search(r'dw1000|dwm1000', body[:500], re.I):
                         chip_guess = "DW1000"
-                        # All DW1000 versions are vulnerable to Ghost Peak in SP0
-                        is_vulnerable = True
+                        # DW1000 has NO SP3 support, so it's vulnerable when
+                        # any STS-based attack applies. Still surface as
+                        # Tentative when we can't see STS markers.
+                        if sts_mode == "unknown":
+                            is_vulnerable = True   # default for DW1000
+                            confidence = "Tentative"
                     elif re.search(r'dw3000|dwm3000', body[:500], re.I):
                         chip_guess = "DW3000"
-                        # Vulnerable unless STS SP3 is confirmed
-                        is_vulnerable = True
+                        # DW3000 + SP3 is NOT vulnerable. Don't fire.
+                        if sts_mode == "unknown":
+                            # No mode evidence — don't auto-flag as vuln;
+                            # emit an INFO follow-up to manually verify.
+                            is_vulnerable = False
+                            confidence = "Tentative"
+                            _log(f"  DW3000 STS mode undetermined — skipping "
+                                 f"Ghost Peak emission (manual verify required)")
 
                     anchor_info = {
-                        "firmware_version": version_str,
-                        "chip": chip_guess,
+                        "firmware_version":     version_str,
+                        "chip":                 chip_guess,
+                        "sts_mode":             sts_mode,
+                        "confidence":           confidence,
                         "potentially_vulnerable": is_vulnerable,
                     }
-                    vulnerable_anchors.append(anchor_info)
+                    if is_vulnerable:
+                        vulnerable_anchors.append(anchor_info)
                     _log(f"  Anchor firmware: {version_str} (chip: {chip_guess}, "
-                         f"vulnerable: {is_vulnerable})")
+                         f"sts_mode: {sts_mode}, vulnerable: {is_vulnerable}, "
+                         f"confidence: {confidence})")
 
         ghost_peak_data["anchor_firmware_checked"] = True
         ghost_peak_data["anchor_firmware_versions"] = vulnerable_anchors
