@@ -25,7 +25,7 @@ Usage:
 """
 from __future__ import annotations
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 import argparse
 import json
@@ -53,6 +53,17 @@ MANAGED = os.environ.get("SPECTRE_MANAGED") == "1"
 _SP_LOG     = "__SPECTRE_LOG__"
 _SP_ERR     = "__SPECTRE_ERR__"
 _SP_STATUS  = "__SPECTRE_STATUS__"
+
+# §13b/§14j/§14k: run-dir audit log (scan.log + scan.log.json + errors.log), set
+# in main() once the project dir is known. _tok() forwards here so every message
+# + phase transition is persisted with a timestamp (the token stream is ephemeral).
+try:
+    if "/opt/pr0t31n/shared" not in sys.path:
+        sys.path.insert(0, "/opt/pr0t31n/shared")
+    import pr0t31n_event_log as _el
+except Exception:
+    _el = None
+_RUNLOG = None
 _SP_FINDING = "__SPECTRE_FINDING__"
 _SP_PROMPT  = "__SPECTRE_PROMPT__"
 
@@ -125,6 +136,10 @@ def _tok(token: str, msg: str) -> None:
 
 
 def _log(msg: str) -> None:
+    # §13b: persist to the run-dir audit log regardless of managed/standalone.
+    if _RUNLOG is not None:
+        try: _RUNLOG.info(msg)
+        except Exception: pass
     if MANAGED:
         _tok(_SP_LOG, msg)
     else:
@@ -132,6 +147,9 @@ def _log(msg: str) -> None:
 
 
 def _err(msg: str) -> None:
+    if _RUNLOG is not None:
+        try: _RUNLOG.error(msg)
+        except Exception: pass
     if MANAGED:
         _tok(_SP_ERR, msg)
     else:
@@ -139,6 +157,12 @@ def _err(msg: str) -> None:
 
 
 def _status(phase: str, status: str, step: str = "") -> None:
+    # §14j: persist the phase transition to the audit log with a timestamp.
+    if _RUNLOG is not None:
+        try:
+            _RUNLOG.event(f"phase {phase}: {status}" + (f" — {step}" if step else ""))
+        except Exception:
+            pass
     payload = json.dumps({
         "phase": phase,
         "status": status,
@@ -148,7 +172,7 @@ def _status(phase: str, status: str, step: str = "") -> None:
     if MANAGED:
         _tok(_SP_STATUS, payload)
     else:
-        _log(f"[STATUS] phase={phase} status={status} step={step}")
+        print(f"[STATUS] phase={phase} status={status} step={step}", flush=True)
 
 
 def _finding(finding_id: str, output_file: str = "", data: Optional[dict] = None) -> None:
@@ -1845,6 +1869,15 @@ def main() -> None:
         project_dir = _build_project_dir(_cs, _sd, os.environ.get("SPECTRE_TOOL_ID", "aether-u"))
 
     project_dir.mkdir(parents=True, exist_ok=True)
+    # §13b/§14j/§14k: canonical run-dir audit log + own-version startup EVENT.
+    global _RUNLOG
+    if _el is not None:
+        try:
+            _RUNLOG = _el.EventLogger(project_dir / "scan.log",
+                                       errors_path=project_dir / "errors.log")
+            _RUNLOG.event(f"Aether-U v{VERSION} started")
+        except Exception:
+            _RUNLOG = None
     _log(f"[*] Aether-U v{VERSION} starting")
     _log(f"[*] Project directory: {project_dir.resolve()}")
     _log(f"[*] Config: {config_path.resolve()}")
