@@ -32,6 +32,24 @@ BLUE    = "\033[94m"
 MAGENTA = "\033[95m"
 
 
+def _pip_installed(pkg_spec):
+    """Return True if a pip package is already importable."""
+    import importlib.util
+    name = pkg_spec.split(">=")[0].split("==")[0].split("[")[0].split("<")[0].strip()
+    _IMPORT_MAP = {
+        "paho-mqtt": "paho", "python-nmap": "nmap", "beautifulsoup4": "bs4",
+        "python-docx": "docx", "python-whois": "whois", "Pillow": "PIL",
+        "pyOpenSSL": "OpenSSL", "dnspython": "dns", "pyyaml": "yaml",
+        "scikit-learn": "sklearn", "python-dateutil": "dateutil",
+        "python-magic": "magic", "flask-socketio": "flask_socketio",
+        "flask-cors": "flask_cors", "python-engineio": "engineio",
+        "python-socketio": "socketio", "charset-normalizer": "charset_normalizer",
+        "ruamel.yaml": "ruamel", "lxml-html-clean": "lxml_html_clean",
+    }
+    mod = _IMPORT_MAP.get(name, name.replace("-", "_"))
+    return importlib.util.find_spec(mod) is not None
+
+
 def cprint(msg: str, colour: str = RESET, bold: bool = False) -> None:
     prefix = BOLD if bold else ""
     print(f"{prefix}{colour}{msg}{RESET}")
@@ -257,11 +275,27 @@ def phase_brew(dry_run: bool) -> None:
     else:
         base_cmd = [brew_bin]
 
-    info(f"Installing brew packages: {' '.join(BREW_PACKAGES)}")
-    run(base_cmd + ["install"] + BREW_PACKAGES, dry_run=dry_run)
+    try:
+        _installed = set(subprocess.run(
+            base_cmd + ["list", "--formula", "-1"],
+            capture_output=True, text=True, check=True).stdout.strip().splitlines())
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        _installed = set()
+    _missing = [p for p in BREW_PACKAGES if p not in _installed]
+    for p in BREW_PACKAGES:
+        if p in _installed:
+            info(f"✓ {p} already installed")
+    if _missing:
+        info(f"Installing brew packages: {' '.join(_missing)}")
+        run(base_cmd + ["install"] + _missing, dry_run=dry_run)
+    else:
+        info("All brew packages already installed.")
     # sqlmap via pip on macOS
-    info("Installing sqlmap via pip3...")
-    run([sys.executable, "-m", "pip", "install", "sqlmap"], dry_run=dry_run)
+    if not _pip_installed("sqlmap"):
+        info("Installing sqlmap via pip3...")
+        run([sys.executable, "-m", "pip", "install", "sqlmap"], dry_run=dry_run)
+    else:
+        info("✓ sqlmap already installed")
     success("Homebrew phase complete.")
 
 
@@ -279,6 +313,9 @@ def phase_pip(dry_run: bool) -> None:
     info("Installing optional Python packages for Aether-U...")
     info("Note: paho-mqtt is optional — Aether-U uses mosquitto_sub/pub subprocesses by default.")
     for pkg in PIP_PACKAGES:
+        if _pip_installed(pkg):
+            success(f"✓ {pkg} already installed")
+            continue
         rc = run(
             [sys.executable, "-m", "pip", "install", "--break-system-packages", pkg],
             dry_run=dry_run,
@@ -286,7 +323,6 @@ def phase_pip(dry_run: bool) -> None:
         if rc == 0:
             success(f"Installed: {pkg}")
         else:
-            # Try without --break-system-packages (older pip)
             rc2 = run(
                 [sys.executable, "-m", "pip", "install", pkg],
                 dry_run=dry_run,
