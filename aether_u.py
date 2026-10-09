@@ -64,6 +64,13 @@ try:
 except Exception:
     _el = None
 _RUNLOG = None
+
+try:
+    import pr0t31n_pause as _pp
+except ImportError:
+    _pp = None
+_PAUSE = None
+
 _SP_FINDING = "__SPECTRE_FINDING__"
 _SP_PROMPT  = "__SPECTRE_PROMPT__"
 
@@ -1831,6 +1838,11 @@ Examples:
 def _handle_signal(signum, frame) -> None:
     sig_name = signal.Signals(signum).name
     _err(f"Signal received: {sig_name} — requesting graceful shutdown")
+    if _PAUSE is not None:
+        _act = "killed_user" if signum == signal.SIGINT else "killed_crucible"
+        _rsn = "KeyboardInterrupt" if signum == signal.SIGINT else "SIGTERM"
+        _PAUSE.write_stop_reason(_act, _rsn,
+                                 initiated_by="user" if signum == signal.SIGINT else "external")
     _shutdown.set()
 
 
@@ -1878,6 +1890,16 @@ def main() -> None:
             _RUNLOG.event(f"Aether-U v{VERSION} started")
         except Exception:
             _RUNLOG = None
+
+    global _PAUSE
+    if _pp is not None:
+        _PAUSE = _pp.PauseManager(str(project_dir), "aether-u")
+        _PAUSE.start_watcher(grace_period=60)
+        _resumed = os.environ.get("CRUCIBLE_RESUME") == "1"
+        _PAUSE.log_run_type(resumed=_resumed)
+        if _resumed:
+            _PAUSE.cleanup_incomplete()
+
     _log(f"[*] Aether-U v{VERSION} starting")
     _log(f"[*] Project directory: {project_dir.resolve()}")
     _log(f"[*] Config: {config_path.resolve()}")
@@ -1936,6 +1958,8 @@ def main() -> None:
     else:
         # Run all enabled phases in sequence
         for phase_name, meta in PHASES.items():
+            if _PAUSE and _PAUSE.check_and_pause():
+                sys.exit(_pp.EXIT_PAUSED)
             if _shutdown.is_set():
                 _log("Shutdown requested — stopping phase execution")
                 break
@@ -1958,6 +1982,8 @@ def main() -> None:
                 _err(traceback.format_exc())
 
     # ── Finalise ──────────────────────────────────────────────────────────
+    if _PAUSE:
+        _PAUSE.write_stop_reason("completed", "all_phases_done")
     _save_findings(project_dir)
     run_meta["finished"] = datetime.now(timezone.utc).isoformat()
     run_meta["findings_count"] = len(_findings_collected)
