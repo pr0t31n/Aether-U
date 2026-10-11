@@ -66,6 +66,7 @@ def phase_header(title: str) -> None:
 def info(msg: str)    -> None: cprint(f"  [*] {msg}", BLUE)
 def success(msg: str) -> None: cprint(f"  [+] {msg}", GREEN)
 def warn(msg: str)    -> None: cprint(f"  [!] {msg}", YELLOW)
+def note(msg: str)    -> None: cprint(f"  [i] {msg}", YELLOW)
 def error(msg: str)   -> None: cprint(f"  [-] {msg}", RED)
 def step(msg: str)    -> None: cprint(f"  --> {msg}", CYAN)
 
@@ -240,7 +241,7 @@ def phase_dnf(dry_run: bool) -> None:
     run(["dnf", "upgrade", "-y"], dry_run=dry_run)
     info(f"Installing: {' '.join(DNF_PACKAGES)}")
     run(["dnf", "install", "-y"] + DNF_PACKAGES, check=True, dry_run=dry_run)
-    warn("sqlmap may need manual install on RHEL: pip3 install sqlmap")
+    note("sqlmap may need manual install on RHEL: pip3 install sqlmap")
     success("DNF phase complete.")
 
 
@@ -251,7 +252,7 @@ def phase_zypper(dry_run: bool) -> None:
     run(["zypper", "update", "-y"], dry_run=dry_run)
     info(f"Installing: {' '.join(ZYPPER_PACKAGES)}")
     run(["zypper", "install", "-y"] + ZYPPER_PACKAGES, check=True, dry_run=dry_run)
-    warn("sqlmap and mosquitto-clients may need manual install on openSUSE.")
+    note("sqlmap and mosquitto-clients may need manual install on openSUSE.")
     success("Zypper phase complete.")
 
 
@@ -268,7 +269,7 @@ def phase_brew(dry_run: bool) -> None:
     if is_root():
         sudo_user = os.environ.get("SUDO_USER", "")
         if not sudo_user:
-            warn("Running as root but SUDO_USER is not set — skipping brew install "
+            note("Running as root but SUDO_USER is not set — skipping brew install "
                  "to avoid corrupting Homebrew. Re-run as your normal user.")
             return
         base_cmd = ["sudo", "-u", sudo_user, brew_bin]
@@ -396,7 +397,7 @@ def phase_gnuradio(os_id: str, dry_run: bool) -> None:
         run(["zypper", "install", "-y", "gnuradio", "gr-osmosdr", "hackrf"],
             dry_run=dry_run)
     else:
-        warn(f"Unknown OS '{os_id}' — skipping GNU Radio install.")
+        note(f"Unknown OS '{os_id}' — skipping GNU Radio install.")
         warn("Install GNU Radio manually: https://wiki.gnuradio.org/index.php/InstallingGR")
 
     # Check HackRF availability
@@ -413,7 +414,7 @@ def phase_gnuradio(os_id: str, dry_run: bool) -> None:
             pass
         info(f"hackrf_info output: {out_bytes[:200].decode('utf-8', errors='replace')}")
     else:
-        warn("hackrf_info not found — HackRF hardware support unavailable")
+        note("hackrf_info not found — HackRF hardware support unavailable")
         warn("Physical attack phase will run in documentation-only mode")
 
     # Check GNU Radio
@@ -608,7 +609,7 @@ def main() -> None:
         elif os_id == "macos":
             phase_brew(dry_run)
         else:
-            warn(f"Unknown OS '{os_id}' — skipping system package phase.")
+            note(f"Unknown OS '{os_id}' — skipping system package phase.")
     else:
         info("Skipping system package phase (--skip-apt).")
 
