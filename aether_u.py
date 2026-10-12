@@ -71,6 +71,12 @@ except ImportError:
     _pp = None
 _PAUSE = None
 
+
+def _check_pause():
+    if _PAUSE is not None and _PAUSE.check_and_pause():
+        sys.exit(_pp.EXIT_PAUSED)
+
+
 _SP_FINDING = "__SPECTRE_FINDING__"
 _SP_PROMPT  = "__SPECTRE_PROMPT__"
 
@@ -342,19 +348,31 @@ def _resolve_tool(cfg: dict, key: str) -> Optional[str]:
 def _run(cmd: list, timeout: int = 60, cwd: Optional[str] = None,
          env: Optional[dict] = None) -> tuple[str, int]:
     """Run a command with timeout; return (stdout+stderr, returncode)."""
+    if _PAUSE and _PAUSE.is_pause_requested:
+        return "(paused)", -1
     try:
-        r = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
             stdin=subprocess.DEVNULL,
             cwd=cwd,
             env=env,
         )
-        return r.stdout + r.stderr, r.returncode
-    except subprocess.TimeoutExpired:
-        return "(timeout)", -1
+        _pause_key = None
+        if _PAUSE:
+            _pause_key = _PAUSE.register(proc, " ".join(str(c) for c in cmd))
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            return "(timeout)", -1
+        finally:
+            if _pause_key is not None:
+                _PAUSE.unregister(_pause_key)
+        return (stdout or "") + (stderr or ""), proc.returncode
     except FileNotFoundError:
         return f"(executable not found: {cmd[0]})", 127
     except Exception as exc:
@@ -363,10 +381,15 @@ def _run(cmd: list, timeout: int = 60, cwd: Optional[str] = None,
 
 def _popen(cmd: list, **kwargs) -> subprocess.Popen:
     kwargs.setdefault("stdin", subprocess.DEVNULL)
-    return subprocess.Popen(cmd, **kwargs)
+    proc = subprocess.Popen(cmd, **kwargs)
+    if _PAUSE:
+        _PAUSE.register(proc, " ".join(str(c) for c in cmd))
+    return proc
 
 
 def _kill_proc(proc: subprocess.Popen, wait_secs: int = 5) -> None:
+    if _PAUSE:
+        _PAUSE.unregister(proc.pid)
     try:
         proc.terminate()
         proc.wait(timeout=wait_secs)
@@ -554,6 +577,7 @@ def _phase_survey(cfg: dict, project_dir: Path) -> None:
     against the RTLS web console.  Enumerates anchors and tags via the RTLS
     REST API using Sewio-style endpoints.  Detects the RTLS platform type.
     """
+    _check_pause()
     phase_id = "survey"
     timeout = cfg.get("timeout_per_phase", 300)
     tools = cfg.get("tools", {})
@@ -594,6 +618,7 @@ def _phase_survey(cfg: dict, project_dir: Path) -> None:
     if nmap_bin and scan_targets:
         rtls_ports = "80,443,1883,8883,8080,8443,5000,5683,7000,9090"
         for target in scan_targets:
+            _check_pause()
             if _shutdown.is_set():
                 break
             out_base = survey_dir / f"nmap_{target.replace('/', '_').replace('.', '_')}"
@@ -695,6 +720,7 @@ def _phase_survey(cfg: dict, project_dir: Path) -> None:
 
         api_results: dict = {}
         for ep in api_endpoints:
+            _check_pause()
             if _shutdown.is_set():
                 break
             url = f"{base_url}{ep}"
@@ -745,6 +771,7 @@ def _phase_protocol_analysis(cfg: dict, project_dir: Path) -> None:
     any UWB-to-IP gateway traffic.  Analyses MQTT payload structure for ranging
     data exposure.
     """
+    _check_pause()
     phase_id = "protocol_analysis"
     timeout = cfg.get("timeout_per_phase", 300)
     capture_duration = cfg.get("capture_duration", 1800)
@@ -816,6 +843,7 @@ def _phase_protocol_analysis(cfg: dict, project_dir: Path) -> None:
         all_messages: list[str] = []
 
         for topic in mqtt_topics:
+            _check_pause()
             if _shutdown.is_set():
                 break
             topic_file = proto_dir / f"mqtt_topic_{topic.replace('#','ALL').replace('/','_')}.txt"
@@ -842,6 +870,7 @@ def _phase_protocol_analysis(cfg: dict, project_dir: Path) -> None:
                 )
                 deadline = time.time() + cap_duration
                 while time.time() < deadline and not _shutdown.is_set():
+                    _check_pause()
                     if proc.stdout is None:
                         break
                     try:
@@ -961,6 +990,7 @@ def _phase_active_interaction(cfg: dict, project_dir: Path) -> None:
     RTLS reporting endpoints.  Checks for XSS in tag label fields.
     Tests for IDOR by accessing sensor IDs without authorisation.
     """
+    _check_pause()
     phase_id = "active_interaction"
     timeout = cfg.get("timeout_per_phase", 300)
     tools = cfg.get("tools", {})
@@ -1057,6 +1087,7 @@ def _phase_active_interaction(cfg: dict, project_dir: Path) -> None:
         ]
         api_unauth_results: list[dict] = []
         for ep in api_paths:
+            _check_pause()
             if _shutdown.is_set():
                 break
             url = f"{base_url}{ep}"
@@ -1099,6 +1130,7 @@ def _phase_active_interaction(cfg: dict, project_dir: Path) -> None:
         sqli_dir = active_dir / "sqlmap"
         sqli_dir.mkdir(parents=True, exist_ok=True)
         for url in sqli_targets:
+            _check_pause()
             if _shutdown.is_set():
                 break
             _log(f"  sqlmap: {url}")
@@ -1143,6 +1175,7 @@ def _phase_active_interaction(cfg: dict, project_dir: Path) -> None:
         ]
         xss_results: list[dict] = []
         for tag_id in (cfg.get("target_tags") or ["1", "2", "100"]):
+            _check_pause()
             for xss in xss_payloads:
                 if _shutdown.is_set():
                     break
@@ -1235,6 +1268,7 @@ def _phase_physical_attacks(cfg: dict, project_dir: Path) -> None:
     hardware metadata to identify DW1000/DW3000 firmware versions known
     to be vulnerable to ranging attacks.
     """
+    _check_pause()
     phase_id = "physical_attacks"
     timeout = cfg.get("timeout_per_phase", 300)
     physical_access   = cfg.get("physical_access", False)
@@ -1294,6 +1328,7 @@ def _phase_physical_attacks(cfg: dict, project_dir: Path) -> None:
         vulnerable_anchors: list[dict] = []
 
         for ep in firmware_endpoints:
+            _check_pause()
             if _shutdown.is_set():
                 break
             url = f"{base_url}{ep}"
@@ -1391,6 +1426,7 @@ def _phase_physical_attacks(cfg: dict, project_dir: Path) -> None:
         ]
         exposed_fw_endpoints: list[dict] = []
         for ep in fw_update_paths:
+            _check_pause()
             if _shutdown.is_set():
                 break
             url = f"{base_url}{ep}"
@@ -1425,6 +1461,7 @@ def _phase_physical_attacks(cfg: dict, project_dir: Path) -> None:
         ]
         sts_config_found = False
         for ep in sts_endpoints:
+            _check_pause()
             if _shutdown.is_set():
                 break
             url = f"{base_url}{ep}"
@@ -1499,6 +1536,7 @@ def _phase_network_app(cfg: dict, project_dir: Path) -> None:
     paths.  Tests MQTT for retain message attacks.  Checks for MQTT broker
     version disclosure.  Verifies TLS configuration.
     """
+    _check_pause()
     phase_id = "network_app"
     timeout  = cfg.get("timeout_per_phase", 300)
     tools    = cfg.get("tools", {})
@@ -1546,6 +1584,7 @@ def _phase_network_app(cfg: dict, project_dir: Path) -> None:
             "/api/v1/auth", "/api/auth", "/api/v1/login", "/login",
         ]
         for ep in auth_endpoints:
+            _check_pause()
             if _shutdown.is_set():
                 break
             url = f"{base_url}{ep}"
@@ -1611,6 +1650,7 @@ def _phase_network_app(cfg: dict, project_dir: Path) -> None:
         ]
         enum_results: list[dict] = []
         for ep in all_api_paths:
+            _check_pause()
             if _shutdown.is_set():
                 break
             url = f"{base_url}{ep}"
@@ -1894,7 +1934,7 @@ def main() -> None:
     global _PAUSE
     if _pp is not None:
         _PAUSE = _pp.PauseManager(str(project_dir), "aether-u")
-        _PAUSE.start_watcher(grace_period=60)
+        _PAUSE.start_watcher(checkpoint_callback=lambda: _save_findings(project_dir), grace_period=30)
         _resumed = os.environ.get("CRUCIBLE_RESUME") == "1"
         _PAUSE.log_run_type(resumed=_resumed)
         if _resumed:
