@@ -11,7 +11,7 @@ Location System (RTLS) security assessments via:
   Phase 4  — physical_attacks    Physical-layer attack assessment (requires hardware)
   Phase 5  — network_app         Network and application layer testing
 
-Protocol tokens (emitted to stdout for Spectre frontend when SPECTRE_MANAGED=1):
+Protocol tokens (emitted to stdout for Spectre frontend when CRUCIBLE_MANAGED=1):
   __SPECTRE_LOG__     <message>
   __SPECTRE_ERR__     <message>
   __SPECTRE_STATUS__  <json>
@@ -48,11 +48,11 @@ from pathlib import Path
 from typing import Optional
 
 # ── Protocol token configuration ─────────────────────────────────────────────
-MANAGED = os.environ.get("SPECTRE_MANAGED") == "1"
+MANAGED = os.environ.get("CRUCIBLE_MANAGED") == "1"
 
-_SP_LOG     = "__SPECTRE_LOG__"
-_SP_ERR     = "__SPECTRE_ERR__"
-_SP_STATUS  = "__SPECTRE_STATUS__"
+_CP_LOG     = "__CRUCIBLE_LOG__"
+_CP_ERR     = "__CRUCIBLE_ERR__"
+_CP_STATUS  = "__CRUCIBLE_STATUS__"
 
 # §13b/§14j/§14k: run-dir audit log (scan.log + scan.log.json + errors.log), set
 # in main() once the project dir is known. _tok() forwards here so every message
@@ -77,8 +77,8 @@ def _check_pause():
         sys.exit(_pp.EXIT_PAUSED)
 
 
-_SP_FINDING = "__SPECTRE_FINDING__"
-_SP_PROMPT  = "__SPECTRE_PROMPT__"
+_CP_FINDING = "__CRUCIBLE_FINDING__"
+_CP_PROMPT  = "__CRUCIBLE_PROMPT__"
 
 _AETHER_U_DIR = Path(__file__).parent.resolve()
 
@@ -145,7 +145,7 @@ _shutdown = threading.Event()
 # ── Protocol token emitters ───────────────────────────────────────────────────
 
 def _tok(token: str, msg: str) -> None:
-    print(f"{token} {msg}", flush=True)
+    print(f"{token}:{msg}", flush=True)
 
 
 def _log(msg: str) -> None:
@@ -154,7 +154,7 @@ def _log(msg: str) -> None:
         try: _RUNLOG.info(msg)
         except Exception: pass
     if MANAGED:
-        _tok(_SP_LOG, msg)
+        _tok(_CP_LOG, msg)
     else:
         print(msg, flush=True)
 
@@ -164,7 +164,7 @@ def _err(msg: str) -> None:
         try: _RUNLOG.error(msg)
         except Exception: pass
     if MANAGED:
-        _tok(_SP_ERR, msg)
+        _tok(_CP_ERR, msg)
     else:
         print(f"[ERROR] {msg}", file=sys.stderr, flush=True)
 
@@ -183,7 +183,7 @@ def _status(phase: str, status: str, step: str = "") -> None:
         "ts": datetime.now(timezone.utc).isoformat(),
     })
     if MANAGED:
-        _tok(_SP_STATUS, payload)
+        _tok(_CP_STATUS, payload)
     else:
         print(f"[STATUS] phase={phase} status={status} step={step}", flush=True)
 
@@ -205,14 +205,14 @@ def _finding(finding_id: str, output_file: str = "", data: Optional[dict] = None
     }
     _findings_collected.append(rec)
     if MANAGED:
-        _tok(_SP_FINDING, json.dumps(rec))
+        _tok(_CP_FINDING, json.dumps(rec))
     else:
         _log(f"[FINDING] {finding_id} — {rec['title']} ({rec['severity']})")
 
 
 def _prompt(msg: str) -> str:
     if MANAGED:
-        _tok(_SP_PROMPT, msg)
+        _tok(_CP_PROMPT, msg)
         return ""
     try:
         return input(f"[?] {msg} > ").strip()
@@ -1842,7 +1842,7 @@ Examples:
   python3 aether_u.py --list-phases
 
   # Spectre managed mode (emit protocol tokens to stdout):
-  SPECTRE_MANAGED=1 python3 aether_u.py --config config.json
+  CRUCIBLE_MANAGED=1 python3 aether_u.py --config config.json
 """,
     )
     p.add_argument(
@@ -1918,7 +1918,7 @@ def main() -> None:
     else:
         _cs = (cfg.get("client_short") or "").strip()
         _sd = (cfg.get("start_date") or "").strip()
-        project_dir = _build_project_dir(_cs, _sd, os.environ.get("SPECTRE_TOOL_ID", "aether-u"))
+        project_dir = _build_project_dir(_cs, _sd, os.environ.get("CRUCIBLE_TOOL_ID", "aether-u"))
 
     project_dir.mkdir(parents=True, exist_ok=True)
     # §13b/§14j/§14k: canonical run-dir audit log + own-version startup EVENT.
@@ -1946,7 +1946,7 @@ def main() -> None:
     _log(f"[*] RTLS host: {cfg.get('rtls_host', '(not set)')}")
     _log(f"[*] RTLS platform: {cfg.get('rtls_platform', 'unknown')}")
     _log(f"[*] MQTT: {cfg.get('mqtt_host', '') or cfg.get('rtls_host', '(not set)')}:{cfg.get('mqtt_port', 1883)}")
-    _log(f"[*] SPECTRE_MANAGED: {MANAGED}")
+    _log(f"[*] CRUCIBLE_MANAGED: {MANAGED}")
 
     _init_scope(cfg)
     scope = cfg.get("scope", {})
@@ -1969,7 +1969,7 @@ def main() -> None:
     )
     _write_project_meta(
         project_dir,
-        tool=os.environ.get("SPECTRE_TOOL_ID", "aether-u"),
+        tool=os.environ.get("CRUCIBLE_TOOL_ID", "aether-u"),
         client_short=cfg.get("client_short", ""),
         year=((cfg.get("start_date") or "")[:4] or datetime.now(timezone.utc).strftime("%Y")),
         version=VERSION,
