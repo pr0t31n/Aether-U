@@ -1975,6 +1975,17 @@ def main() -> None:
         version=VERSION,
     )
 
+    try:
+        import pr0t31n_dep_snapshot as _ds
+        _ds.write_snapshot(
+            project_dir, "Aether-U", VERSION,
+            binaries=["nmap", "mosquitto_sub", "mosquitto_pub", "tshark",
+                       "sqlmap", "curl"],
+            pip_packages=["paho-mqtt"],
+        )
+    except Exception:
+        pass
+
     # ── Phase execution ───────────────────────────────────────────────────
     phases_cfg = cfg.get("phases", {})
 
