@@ -44,7 +44,7 @@
     },
     {
       "id": "AETHU-005",
-      "title": "SQL Injection in RTLS Reporting Module",
+      "title": "Injection: SQL Injection in RTLS Reporting Module",
       "severity": "HIGH",
       "cvss_score": 8.5,
       "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:N",
@@ -124,7 +124,7 @@
     },
     {
       "id": "AETHU-013",
-      "title": "RTLS Cross-Site Scripting (XSS) in Dashboard",
+      "title": "Injection: RTLS Cross-Site Scripting (XSS) in Dashboard",
       "severity": "MEDIUM",
       "cvss_score": 6.1,
       "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:R/S:C/C:L/I:L/A:N",
