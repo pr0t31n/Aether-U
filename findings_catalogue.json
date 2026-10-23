@@ -24,7 +24,7 @@
     },
     {
       "id": "AETHU-003",
-      "title": "IoT Protocol: Unauthenticated MQTT Broker",
+      "title": "IoT: Unauthenticated MQTT Broker",
       "severity": "HIGH",
       "cvss_score": 8.6,
       "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:N",
@@ -34,7 +34,7 @@
     },
     {
       "id": "AETHU-004",
-      "title": "IoT Protocol: RTLS Position Data Injection via MQTT",
+      "title": "IoT: RTLS Position Data Injection via MQTT",
       "severity": "HIGH",
       "cvss_score": 8.1,
       "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:N/I:H/A:H",
@@ -94,7 +94,7 @@
     },
     {
       "id": "AETHU-010",
-      "title": "IoT Protocol: MQTT Cleartext Credential Transmission",
+      "title": "IoT: MQTT Cleartext Credential Transmission",
       "severity": "MEDIUM",
       "cvss_score": 6.8,
       "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
