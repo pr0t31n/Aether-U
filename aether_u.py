@@ -133,6 +133,7 @@ def _write_project_meta(project_dir: Path, tool: str, client_short: str,
 # ── In-process state ──────────────────────────────────────────────────────────
 _catalogue: dict[str, dict] = {}
 _findings_collected: list[dict] = []
+_RUN_DIR: Optional[Path] = None
 
 # ── Scope enforcement state ───────────────────────────────────────────────────
 _scope_hosts: set[str] = set()
@@ -208,6 +209,7 @@ def _finding(finding_id: str, output_file: str = "", data: Optional[dict] = None
         _tok(_CP_FINDING, json.dumps(rec))
     else:
         _log(f"[FINDING] {finding_id} — {rec['title']} ({rec['severity']})")
+    _flush_findings()
 
 
 def _prompt(msg: str) -> str:
@@ -409,6 +411,15 @@ def _save_findings(output_dir: Path) -> None:
     out = output_dir / "findings_spectre.json"
     out.write_text(json.dumps(_findings_collected, indent=2), encoding="utf-8")
     _log(f"Findings written: {out} ({len(_findings_collected)} item(s))")
+
+
+def _flush_findings():
+    if _RUN_DIR is None:
+        return
+    try:
+        _save_findings(_RUN_DIR)
+    except Exception:
+        pass
 
 
 # ── HTTP helper ───────────────────────────────────────────────────────────────
@@ -1921,6 +1932,8 @@ def main() -> None:
         project_dir = _build_project_dir(_cs, _sd, os.environ.get("CRUCIBLE_TOOL_ID", "aether-u"))
 
     project_dir.mkdir(parents=True, exist_ok=True)
+    global _RUN_DIR
+    _RUN_DIR = project_dir
     # §13b/§14j/§14k: canonical run-dir audit log + own-version startup EVENT.
     global _RUNLOG
     if _el is not None:
