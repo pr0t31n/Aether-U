@@ -134,6 +134,22 @@ def _write_project_meta(project_dir: Path, tool: str, client_short: str,
 _catalogue: dict[str, dict] = {}
 _findings_collected: list[dict] = []
 _RUN_DIR: Optional[Path] = None
+_fdb = None
+
+
+def _init_fdb():
+    global _fdb
+    _db_path = os.environ.get("PR0T31N_FINDINGS_DB")
+    if _db_path:
+        try:
+            import sys as _s
+            if "/opt/pr0t31n/shared" not in _s.path:
+                _s.path.insert(0, "/opt/pr0t31n/shared")
+            import pr0t31n_findings_db
+            _fdb = pr0t31n_findings_db.FindingsDB(_db_path)
+        except Exception:
+            pass
+
 
 # ── Scope enforcement state ───────────────────────────────────────────────────
 _scope_hosts: set[str] = set()
@@ -205,6 +221,11 @@ def _finding(finding_id: str, output_file: str = "", data: Optional[dict] = None
         "ts": datetime.now(timezone.utc).isoformat(),
     }
     _findings_collected.append(rec)
+    if _fdb:
+        try:
+            _fdb.insert_finding(rec)
+        except Exception:
+            pass
     if MANAGED:
         _tok(_CP_FINDING, json.dumps(rec))
     else:
@@ -1919,6 +1940,7 @@ def main() -> None:
         sys.exit(0)
 
     _load_catalogue()
+    _init_fdb()
 
     config_path = Path(args.config)
     cfg = _load_config(config_path)
