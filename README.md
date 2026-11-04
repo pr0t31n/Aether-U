@@ -49,7 +49,7 @@ Security testing is a professional discipline with significant ethical and legal
 > **Under Development — Untested.** This tool has not been validated in production engagements. Features may be incomplete, unstable, or produce unreliable results. Do not rely on its output for deliverables without independent verification.
 
 **Version:** 1.0.0
-**Part of the Aether family** | Integrates with Spectre via protocol tokens
+**Part of the Aether family** | Integrates with Crucible via protocol tokens
 
 ---
 
@@ -187,13 +187,13 @@ python3 aether_u.py --phase network_app --config config.json --project /tmp/outp
 python3 aether_u.py --list-phases
 ```
 
-### Spectre managed mode
+### Crucible managed mode
 
 ```bash
-SPECTRE_MANAGED=1 python3 aether_u.py --config config.json --project /tmp/rtls_audit
+CRUCIBLE_MANAGED=1 python3 aether_u.py --config config.json --project /tmp/rtls_audit
 ```
 
-In managed mode all output is prefixed with protocol tokens (`__SPECTRE_LOG__`, `__SPECTRE_FINDING__`, etc.) for consumption by the Spectre frontend.
+In managed mode all output is prefixed with protocol tokens (`__SPECTRE_LOG__`, `__SPECTRE_FINDING__`, etc.) for consumption by the Crucible frontend.
 
 ---
 
@@ -295,9 +295,9 @@ aether_u_output/
 
 ---
 
-## Spectre Integration
+## Crucible Integration
 
-Aether-U emits protocol tokens to stdout when `SPECTRE_MANAGED=1` is set. The Spectre frontend listens for these tokens and renders findings, status updates, and prompts in the Spectre UI.
+Aether-U emits protocol tokens to stdout when `CRUCIBLE_MANAGED=1` is set. The Crucible frontend listens for these tokens and renders findings, status updates, and prompts in the Crucible UI.
 
 | Token | Purpose |
 |---|---|
