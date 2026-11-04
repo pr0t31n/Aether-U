@@ -11,12 +11,12 @@ Location System (RTLS) security assessments via:
   Phase 4  — physical_attacks    Physical-layer attack assessment (requires hardware)
   Phase 5  — network_app         Network and application layer testing
 
-Protocol tokens (emitted to stdout for Spectre frontend when CRUCIBLE_MANAGED=1):
-  __SPECTRE_LOG__     <message>
-  __SPECTRE_ERR__     <message>
-  __SPECTRE_STATUS__  <json>
-  __SPECTRE_FINDING__ <json>
-  __SPECTRE_PROMPT__  <message>
+Protocol tokens (emitted to stdout for Crucible frontend when CRUCIBLE_MANAGED=1):
+  __CRUCIBLE_LOG__     <message>
+  __CRUCIBLE_ERR__     <message>
+  __CRUCIBLE_STATUS__  <json>
+  __CRUCIBLE_FINDING__ <json>
+  __CRUCIBLE_PROMPT__  <message>
 
 Usage:
     python3 aether_u.py --config config.json --project /path/to/project
@@ -25,9 +25,9 @@ Usage:
 """
 from __future__ import annotations
 
-VERSION = Path(__file__).resolve().parent.joinpath("VERSION").read_text().strip()
-
 import argparse
+import base64
+import csv
 import json
 import os
 import socket
@@ -47,6 +47,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+VERSION = Path(__file__).resolve().parent.joinpath("VERSION").read_text().strip()
+
 # ── Protocol token configuration ─────────────────────────────────────────────
 MANAGED = os.environ.get("CRUCIBLE_MANAGED") == "1"
 
@@ -64,6 +66,21 @@ try:
 except Exception:
     _el = None
 _RUNLOG = None
+
+try:
+    import pr0t31n_tool_runner as _ur
+except ImportError:
+    _ur = None
+
+try:
+    import pr0t31n_schema as _us
+except ImportError:
+    _us = None
+
+try:
+    import pr0t31n_http_evidence as _he
+except ImportError:
+    _he = None
 
 try:
     import pr0t31n_pause as _pp
@@ -135,6 +152,7 @@ _catalogue: dict[str, dict] = {}
 _findings_collected: list[dict] = []
 _RUN_DIR: Optional[Path] = None
 _fdb = None
+_CURRENT_PHASE = ""
 
 
 def _init_fdb():
@@ -205,21 +223,75 @@ def _status(phase: str, status: str, step: str = "") -> None:
         print(f"[STATUS] phase={phase} status={status} step={step}", flush=True)
 
 
-def _finding(finding_id: str, output_file: str = "", data: Optional[dict] = None) -> None:
+def _finding(finding_id: str, output_file: str = "", data: Optional[dict] = None,
+             *, ip: str = "", port: int = 0, service: str = "",
+             hostname: str = "", command: str = "") -> None:
     entry = _catalogue.get(finding_id, {})
-    rec = {
-        "id": finding_id,
-        "title": entry.get("title", finding_id),
-        "severity": entry.get("severity", "HIGH"),
-        "cvss_score": entry.get("cvss_score"),
-        "cvss_vector": entry.get("cvss_vector", ""),
-        "category": entry.get("category", ""),
-        "description": entry.get("description", ""),
-        "remediation": entry.get("remediation", ""),
-        "data": data or {},
-        "output_file": output_file,
-        "ts": datetime.now(timezone.utc).isoformat(),
-    }
+    risk = (entry.get("risk") or entry.get("severity") or "HIGH").upper()
+    of_rel = output_file
+    if of_rel and _RUN_DIR:
+        try:
+            of_rel = str(Path(output_file).relative_to(_RUN_DIR))
+        except ValueError:
+            pass
+    if _us:
+        rec = _us.make_finding(
+            tool="aether-u",
+            title=entry.get("title", finding_id),
+            ip=ip,
+            port=port,
+            risk=risk,
+            command=command,
+            description=entry.get("description", ""),
+            sources="aether-u",
+            affected=ip or hostname or "",
+            remediation=entry.get("remediation_brief", entry.get("remediation", "")),
+            exploitdb=bool(entry.get("searchsploit_terms")),
+            metasploit=bool(entry.get("metasploit_modules")),
+            exploit_details=[],
+            hostname=hostname,
+            service=service,
+            output_file=of_rel,
+            output=json.dumps(data)[:4096] if data else "",
+            phase=_CURRENT_PHASE,
+            catalogue_id=finding_id,
+            cves=",".join(entry.get("cve_examples", [])),
+            owasp=entry.get("owasp_web", ""),
+            nist=", ".join(entry.get("nist_800_53", [])),
+            cvss_score=entry.get("cvss_v3_base"),
+            cvss_vector=entry.get("cvss_vector", ""),
+            cwe=entry.get("cwe", []),
+            confidence=entry.get("confidence", "Firm"),
+            nist_csf2=entry.get("nist_csf2", []),
+            nist_800_53=entry.get("nist_800_53", []),
+            pci_dss_4=entry.get("pci_dss_4", []),
+            mitre_attack=entry.get("mitre_attack", []),
+        )
+    else:
+        rec = {
+            "id": str(uuid.uuid4()),
+            "tool": "aether-u",
+            "title": entry.get("title", finding_id),
+            "datetime": datetime.now(timezone.utc).isoformat(),
+            "ip": ip,
+            "port": port,
+            "hostname": hostname,
+            "risk": risk,
+            "command": command,
+            "description": entry.get("description", ""),
+            "output": json.dumps(data)[:4096] if data else "",
+            "sources": "aether-u",
+            "affected": ip or hostname or "",
+            "remediation": entry.get("remediation_brief", entry.get("remediation", "")),
+            "exploitdb": bool(entry.get("searchsploit_terms")),
+            "metasploit": bool(entry.get("metasploit_modules")),
+            "exploit_details": [],
+            "service": service,
+            "output_file": of_rel,
+            "phase": _CURRENT_PHASE,
+            "catalogue_id": finding_id,
+            "cves": ",".join(entry.get("cve_examples", [])),
+        }
     _findings_collected.append(rec)
     if _fdb:
         try:
@@ -229,7 +301,7 @@ def _finding(finding_id: str, output_file: str = "", data: Optional[dict] = None
     if MANAGED:
         _tok(_CP_FINDING, json.dumps(rec))
     else:
-        _log(f"[FINDING] {finding_id} — {rec['title']} ({rec['severity']})")
+        _log(f"[FINDING] {finding_id} — {rec.get('title', finding_id)} ({risk})")
     _flush_findings()
 
 
@@ -369,10 +441,16 @@ def _resolve_tool(cfg: dict, key: str) -> Optional[str]:
 # ── Subprocess helpers ────────────────────────────────────────────────────────
 
 def _run(cmd: list, timeout: int = 60, cwd: Optional[str] = None,
-         env: Optional[dict] = None) -> tuple[str, int]:
-    """Run a command with timeout; return (stdout+stderr, returncode)."""
+         env: Optional[dict] = None,
+         output_file: Optional[str] = None) -> tuple[str, int]:
+    """Run a command with timeout; return (stdout+stderr, returncode).
+
+    When output_file is given and pr0t31n_tool_runner is available, a .log
+    sibling is emitted per §14.
+    """
     if _PAUSE and _PAUSE.is_pause_requested:
         return "(paused)", -1
+    _started = datetime.now(timezone.utc)
     try:
         proc = subprocess.Popen(
             cmd,
@@ -391,10 +469,30 @@ def _run(cmd: list, timeout: int = 60, cwd: Optional[str] = None,
         except subprocess.TimeoutExpired:
             proc.kill()
             stdout, stderr = proc.communicate()
+            _ended = datetime.now(timezone.utc)
+            if _ur and output_file:
+                try:
+                    _ur.write_tool_log(cmd=cmd, started=_started, ended=_ended,
+                                       exit_code=-1, stdout=stdout or "",
+                                       stderr=stderr or "", output_file=output_file,
+                                       errors_log=str(_RUN_DIR / "errors.log") if _RUN_DIR else None)
+                except Exception:
+                    pass
             return "(timeout)", -1
         finally:
             if _pause_key is not None:
                 _PAUSE.unregister(_pause_key)
+        _ended = datetime.now(timezone.utc)
+        if _ur and (output_file or _RUN_DIR):
+            try:
+                _of = output_file or str(_RUN_DIR / f"{Path(cmd[0]).stem}_output.txt")
+                _ur.write_tool_log(cmd=cmd, started=_started, ended=_ended,
+                                   exit_code=proc.returncode,
+                                   stdout=stdout or "", stderr=stderr or "",
+                                   output_file=_of,
+                                   errors_log=str(_RUN_DIR / "errors.log") if _RUN_DIR else None)
+            except Exception:
+                pass
         return (stdout or "") + (stderr or ""), proc.returncode
     except FileNotFoundError:
         return f"(executable not found: {cmd[0]})", 127
@@ -429,9 +527,32 @@ def _kill_proc(proc: subprocess.Popen, wait_secs: int = 5) -> None:
 # ── Findings persistence ──────────────────────────────────────────────────────
 
 def _save_findings(output_dir: Path) -> None:
-    out = output_dir / "findings_spectre.json"
-    out.write_text(json.dumps(_findings_collected, indent=2), encoding="utf-8")
-    _log(f"Findings written: {out} ({len(_findings_collected)} item(s))")
+    # §13e dual-write: universal findings.json + legacy findings_spectre.json
+    legacy = output_dir / "findings_spectre.json"
+    legacy.write_text(json.dumps(_findings_collected, indent=2), encoding="utf-8")
+    if _us:
+        try:
+            _us.write_universal_findings(output_dir / "findings.json", _findings_collected)
+        except Exception:
+            (output_dir / "findings.json").write_text(
+                json.dumps(_findings_collected, indent=2), encoding="utf-8")
+    else:
+        (output_dir / "findings.json").write_text(
+            json.dumps(_findings_collected, indent=2), encoding="utf-8")
+    # CSV mirror
+    try:
+        _csv_cols = ["id", "tool", "title", "datetime", "ip", "port", "hostname",
+                     "risk", "service", "description", "remediation", "output_file",
+                     "cves", "catalogue_id", "phase"]
+        csv_path = output_dir / "findings.csv"
+        with open(csv_path, "w", newline="", encoding="utf-8") as fh:
+            w = csv.DictWriter(fh, fieldnames=_csv_cols, extrasaction="ignore")
+            w.writeheader()
+            for f in _findings_collected:
+                w.writerow(f)
+    except Exception:
+        pass
+    _log(f"Findings written: {output_dir} ({len(_findings_collected)} item(s))")
 
 
 def _flush_findings():
@@ -453,7 +574,6 @@ def _http_get(url: str, timeout: int = 15,
     try:
         req = urllib.request.Request(url, headers=headers or {})
         if username is not None and password is not None:
-            import base64
             creds = base64.b64encode(f"{username}:{password}".encode()).decode()
             req.add_header("Authorization", f"Basic {creds}")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -478,7 +598,6 @@ def _http_post(url: str, data: dict, timeout: int = 15,
             hdrs.update(headers)
         req = urllib.request.Request(url, data=payload, headers=hdrs, method="POST")
         if username is not None and password is not None:
-            import base64
             creds = base64.b64encode(f"{username}:{password}".encode()).decode()
             req.add_header("Authorization", f"Basic {creds}")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -588,7 +707,7 @@ def _detect_platform(host: str, port: int, timeout: int = 10) -> str:
 
     if "sewio" in combined or "rtls studio" in combined:
         return "sewio"
-    if "pozyx" in combined or "creator" in combined:
+    if "pozyx" in combined or "pozyx creator" in combined:
         return "pozyx"
     if "avalue" in combined or "rtls manager" in combined:
         return "avalue"
@@ -609,6 +728,8 @@ def _phase_survey(cfg: dict, project_dir: Path) -> None:
     against the RTLS web console.  Enumerates anchors and tags via the RTLS
     REST API using Sewio-style endpoints.  Detects the RTLS platform type.
     """
+    global _CURRENT_PHASE
+    _CURRENT_PHASE = "survey"
     _check_pause()
     phase_id = "survey"
     timeout = cfg.get("timeout_per_phase", 300)
@@ -656,6 +777,7 @@ def _phase_survey(cfg: dict, project_dir: Path) -> None:
             out_base = survey_dir / f"nmap_{target.replace('/', '_').replace('.', '_')}"
             nmap_xml = str(out_base) + ".xml"
             nmap_txt = str(out_base) + ".txt"
+            nmap_gnmap = str(out_base) + ".gnmap"
             _log(f"[1] nmap: scanning {target} ports {rtls_ports}...")
             _status(phase_id, "running", f"nmap {target}")
             cmd = [
@@ -663,10 +785,11 @@ def _phase_survey(cfg: dict, project_dir: Path) -> None:
                 "-p", rtls_ports,
                 "-oX", nmap_xml,
                 "-oN", nmap_txt,
+                "-oG", nmap_gnmap,
                 "--host-timeout", "60s",
                 target,
             ]
-            out, rc = _run(cmd, timeout=min(timeout, 180))
+            out, rc = _run(cmd, timeout=min(timeout, 180), output_file=nmap_xml)
             _log(out[:6000])
             _log(f"  nmap exit={rc}; XML saved to {nmap_xml}")
 
@@ -691,7 +814,7 @@ def _phase_survey(cfg: dict, project_dir: Path) -> None:
             "-f", "tcp port 1883 or tcp port 8883 or udp port 5683",
             "-w", str(tshark_out),
         ]
-        out, rc = _run(cmd, timeout=capture_duration + 30)
+        out, rc = _run(cmd, timeout=capture_duration + 30, output_file=str(tshark_out))
         if tshark_out.exists() and tshark_out.stat().st_size > 0:
             _log(f"  [+] Capture saved: {tshark_out} ({tshark_out.stat().st_size} bytes)")
         else:
@@ -709,10 +832,9 @@ def _phase_survey(cfg: dict, project_dir: Path) -> None:
                 output_file=str(survey_dir / "default_creds.json"),
                 data={
                     "rtls_host": rtls_host,
-                    "username": valid_creds[0],
-                    "password": valid_creds[1],
                     "platform": cfg.get("rtls_platform", "unknown"),
                 },
+                ip=rtls_host, port=rtls_port, service="rtls-http",
             )
             (survey_dir / "default_creds.json").write_text(
                 json.dumps({"host": rtls_host, "username": valid_creds[0],
@@ -769,6 +891,7 @@ def _phase_survey(cfg: dict, project_dir: Path) -> None:
                         output_file=str(survey_dir / "api_enum.json"),
                         data={"endpoint": url, "http_status": status,
                               "response_preview": body[:500]},
+                        ip=rtls_host, port=rtls_port, service="rtls-http",
                     )
 
         (survey_dir / "api_enum.json").write_text(
@@ -803,6 +926,8 @@ def _phase_protocol_analysis(cfg: dict, project_dir: Path) -> None:
     any UWB-to-IP gateway traffic.  Analyses MQTT payload structure for ranging
     data exposure.
     """
+    global _CURRENT_PHASE
+    _CURRENT_PHASE = "protocol_analysis"
     _check_pause()
     phase_id = "protocol_analysis"
     timeout = cfg.get("timeout_per_phase", 300)
@@ -841,7 +966,7 @@ def _phase_protocol_analysis(cfg: dict, project_dir: Path) -> None:
             "-C", "5",          # capture first 5 messages then exit
             "--quiet",
         ]
-        out, rc = _run(cmd, timeout=20)
+        out, rc = _run(cmd, timeout=20, output_file=str(test_out))
         test_out.write_text(out, encoding="utf-8")
         _log(f"  mosquitto_sub (unauth) rc={rc}, output={out[:500]}")
 
@@ -857,6 +982,7 @@ def _phase_protocol_analysis(cfg: dict, project_dir: Path) -> None:
                     "mqtt_port": mqtt_port,
                     "sample_output": out[:1000],
                 },
+                ip=mqtt_host, port=mqtt_port, service="mqtt",
             )
         elif "Connection refused" in out or rc != 0:
             _log("  [~] MQTT broker refused unauthenticated connection (authentication required)")
@@ -923,6 +1049,7 @@ def _phase_protocol_analysis(cfg: dict, project_dir: Path) -> None:
                                 "AETHU-010",
                                 output_file=str(topic_file),
                                 data={"topic": topic, "sample": decoded[:500]},
+                                ip=mqtt_host, port=mqtt_port, service="mqtt",
                             )
             except Exception as exc:
                 _err(f"MQTT capture error on topic {topic}: {exc}")
@@ -987,7 +1114,41 @@ def _phase_protocol_analysis(cfg: dict, project_dir: Path) -> None:
                 output_file=str(analysis_file),
                 data={"ranging_data_exposed": True,
                       "sample_topics": position_topics[:5]},
+                ip=mqtt_host, port=mqtt_port, service="mqtt",
             )
+
+    # ── MQTT ACL / topic restriction test ────────────────────────────────
+    mosquitto_pub_bin = _check_tool(tools.get("mosquitto_pub", "mosquitto_pub"))
+    if mosquitto_sub and mosquitto_pub_bin and mqtt_host:
+        _status(phase_id, "running", "MQTT ACL test")
+        _log("[2] Testing MQTT topic-level access control...")
+        acl_results = []
+        restricted_topics = [
+            "$SYS/broker/config", "admin/config", "system/restart",
+            "sewio/config/anchors", "pozyx/admin/settings",
+        ]
+        creds = cfg.get("credentials", {})
+        acl_username = creds.get("username", "")
+        acl_password = creds.get("password", "")
+        for topic in restricted_topics:
+            if _shutdown.is_set():
+                break
+            cmd = [mosquitto_pub_bin, "-h", mqtt_host, "-p", str(mqtt_port),
+                   "-t", topic, "-m", '{"aether_u":"acl_test"}']
+            if acl_username:
+                cmd += ["-u", acl_username, "-P", acl_password]
+            out, rc = _run(cmd, timeout=10)
+            acl_results.append({"topic": topic, "rc": rc, "output": out[:200]})
+            if rc == 0 and "not authorized" not in out.lower():
+                _log(f"  [!] Publish succeeded to restricted topic: {topic}")
+        acl_file = proto_dir / "mqtt_acl_test.json"
+        acl_file.write_text(json.dumps(acl_results, indent=2), encoding="utf-8")
+        unrestricted = [r for r in acl_results
+                        if r["rc"] == 0 and "not authorized" not in r["output"].lower()]
+        if unrestricted:
+            _finding("AETHU-017", output_file=str(acl_file),
+                     data={"unrestricted_topics": [r["topic"] for r in unrestricted]},
+                     ip=mqtt_host, port=mqtt_port, service="mqtt")
 
     # ── tshark capture for UWB gateway traffic ────────────────────────────
     if tshark_bin:
@@ -1001,7 +1162,7 @@ def _phase_protocol_analysis(cfg: dict, project_dir: Path) -> None:
             "-f", f"host {mqtt_host} or port 1883 or port 8883 or port 5683",
             "-w", str(tshark_out),
         ]
-        out, rc = _run(cmd, timeout=cap_dur + 30)
+        out, rc = _run(cmd, timeout=cap_dur + 30, output_file=str(tshark_out))
         if tshark_out.exists() and tshark_out.stat().st_size > 0:
             _log(f"  [+] UWB gateway capture saved: {tshark_out}")
         else:
@@ -1022,6 +1183,8 @@ def _phase_active_interaction(cfg: dict, project_dir: Path) -> None:
     RTLS reporting endpoints.  Checks for XSS in tag label fields.
     Tests for IDOR by accessing sensor IDs without authorisation.
     """
+    global _CURRENT_PHASE
+    _CURRENT_PHASE = "active_interaction"
     _check_pause()
     phase_id = "active_interaction"
     timeout = cfg.get("timeout_per_phase", 300)
@@ -1100,6 +1263,7 @@ def _phase_active_interaction(cfg: dict, project_dir: Path) -> None:
                 "AETHU-004",
                 output_file=str(inj_file),
                 data={"successful_topics": [r["topic"] for r in injection_results if r["rc"] == 0]},
+                ip=mqtt_host, port=mqtt_port, service="mqtt",
             )
     elif not injection_auth:
         _log("[~] injection_authorized=false — MQTT injection test skipped")
@@ -1142,6 +1306,7 @@ def _phase_active_interaction(cfg: dict, project_dir: Path) -> None:
                     "AETHU-006",
                     output_file=str(active_dir / "api_unauth.json"),
                     data={"endpoint": url, "response_preview": body_anon[:500]},
+                    ip=rtls_host, port=rtls_port, service="rtls-http",
                 )
             elif status_anon in (401, 403) and status_auth == 200:
                 _log(f"  [*] Authenticated endpoint: {ep} (HTTP {status_auth})")
@@ -1178,7 +1343,8 @@ def _phase_active_interaction(cfg: dict, project_dir: Path) -> None:
             ]
             if username:
                 cmd += ["--auth-type=Basic", f"--auth-cred={username}:{password}"]
-            out, rc = _run(cmd, timeout=min(timeout, 120))
+            out, rc = _run(cmd, timeout=min(timeout, 120),
+                           output_file=str(sqli_dir / f"sqlmap_{url.split('/')[-1][:30]}.txt"))
             _log(out[-3000:])
             sqli_file = active_dir / "sqlmap_summary.txt"
             with open(sqli_file, "a", encoding="utf-8") as fh:
@@ -1191,6 +1357,8 @@ def _phase_active_interaction(cfg: dict, project_dir: Path) -> None:
                     output_file=str(sqli_file),
                     data={"vulnerable_url": url,
                           "sqlmap_snippet": out[-1000:]},
+                    ip=rtls_host, port=rtls_port, service="rtls-http",
+                    command=" ".join(str(c) for c in cmd),
                 )
     elif not sqlmap_bin:
         _log("[~] sqlmap not found — SQL injection tests skipped")
@@ -1234,6 +1402,7 @@ def _phase_active_interaction(cfg: dict, project_dir: Path) -> None:
                             output_file=str(active_dir / "xss_results.json"),
                             data={"tag_id": tag_id, "payload": xss,
                                   "endpoint": patch_url},
+                            ip=rtls_host, port=rtls_port, service="rtls-http",
                         )
                         break
 
@@ -1277,11 +1446,71 @@ def _phase_active_interaction(cfg: dict, project_dir: Path) -> None:
                     data={"resource_type": res_type,
                           "unique_records_found": unique_responses,
                           "id_range_tested": "1-20"},
+                    ip=rtls_host, port=rtls_port, service="rtls-http",
                 )
 
         (active_dir / "idor_results.json").write_text(
             json.dumps(idor_results, indent=2), encoding="utf-8"
         )
+
+    # ── CSRF token check ─────────────────────────────────────────────────
+    if base_url:
+        _status(phase_id, "running", "CSRF protection check")
+        _log("[3] Checking for CSRF protection on state-changing endpoints...")
+        csrf_results = []
+        state_change_endpoints = [
+            ("/api/v1/config", "POST"), ("/api/v1/users", "POST"),
+            ("/api/v1/anchors/1", "PUT"), ("/api/v1/tags/1", "PUT"),
+            ("/api/v1/firmware/update", "POST"), ("/api/v1/zones", "POST"),
+        ]
+        for ep, method in state_change_endpoints:
+            if _shutdown.is_set():
+                break
+            url = f"{base_url}{ep}"
+            status_code, body = _http_post(url, {"test": "csrf_check"},
+                                           username=username or None,
+                                           password=password or None)
+            has_csrf = False
+            if status_code in (200, 201, 400, 403, 405):
+                if any(t in body.lower() for t in ("csrf", "xsrf", "_token", "csrfmiddleware")):
+                    has_csrf = True
+            csrf_results.append({"endpoint": ep, "method": method,
+                                 "status": status_code, "csrf_detected": has_csrf})
+        csrf_file = active_dir / "csrf_check.json"
+        csrf_file.write_text(json.dumps(csrf_results, indent=2), encoding="utf-8")
+        no_csrf = [r for r in csrf_results if not r["csrf_detected"] and r["status"] in (200, 201)]
+        if no_csrf:
+            _finding("AETHU-018", output_file=str(csrf_file),
+                     data={"endpoints_without_csrf": [r["endpoint"] for r in no_csrf]},
+                     ip=rtls_host, port=rtls_port, service="http")
+
+    # ── Account lockout / rate limiting test ──────────────────────────────
+    if base_url:
+        _status(phase_id, "running", "account lockout test")
+        _log("[3] Testing account lockout and rate limiting...")
+        lockout_results = []
+        auth_endpoints = ["/api/v1/auth", "/api/auth", "/api/v1/login", "/login"]
+        lockout_detected = False
+        for ep in auth_endpoints[:2]:
+            if _shutdown.is_set():
+                break
+            url = f"{base_url}{ep}"
+            for i in range(15):
+                status_code, body = _http_post(url, {"username": "admin", "password": f"wrong_{i}"})
+                lockout_results.append({"attempt": i + 1, "endpoint": ep, "status": status_code})
+                if status_code == 429 or "locked" in body.lower() or "rate" in body.lower():
+                    lockout_detected = True
+                    _log(f"  [*] Lockout/rate-limit detected at attempt {i + 1} on {ep}")
+                    break
+            if lockout_detected:
+                break
+        lockout_file = active_dir / "lockout_test.json"
+        lockout_file.write_text(json.dumps(lockout_results, indent=2), encoding="utf-8")
+        if not lockout_detected and lockout_results:
+            _log("  [!] No account lockout or rate limiting detected after 15 failed attempts")
+            _finding("AETHU-019", output_file=str(lockout_file),
+                     data={"attempts": len(lockout_results), "lockout_detected": False},
+                     ip=rtls_host, port=rtls_port, service="http")
 
     _status(phase_id, "complete", "Active interaction testing complete")
     _log(f"[3] Active interaction phase complete. Output: {active_dir}")
@@ -1300,6 +1529,8 @@ def _phase_physical_attacks(cfg: dict, project_dir: Path) -> None:
     hardware metadata to identify DW1000/DW3000 firmware versions known
     to be vulnerable to ranging attacks.
     """
+    global _CURRENT_PHASE
+    _CURRENT_PHASE = "physical_attacks"
     _check_pause()
     phase_id = "physical_attacks"
     timeout = cfg.get("timeout_per_phase", 300)
@@ -1441,6 +1672,7 @@ def _phase_physical_attacks(cfg: dict, project_dir: Path) -> None:
                 "AETHU-001",
                 output_file=str(phys_dir / "ghost_peak_assessment.json"),
                 data=ghost_peak_data,
+                ip=rtls_host, port=rtls_port, service="uwb",
             )
 
     # ── Detect firmware update endpoint ──────────────────────────────────
@@ -1481,6 +1713,7 @@ def _phase_physical_attacks(cfg: dict, project_dir: Path) -> None:
                 "AETHU-009",
                 output_file=str(fw_file),
                 data={"firmware_endpoints": exposed_fw_endpoints},
+                ip=rtls_host, port=rtls_port, service="rtls-http",
             )
 
     # ── UWB STS configuration check ───────────────────────────────────────
@@ -1512,6 +1745,7 @@ def _phase_physical_attacks(cfg: dict, project_dir: Path) -> None:
                               "sts_enabled": sts_enabled,
                               "sp3_mode": sp3_mode,
                               "body_preview": body[:500]},
+                        ip=rtls_host, port=rtls_port, service="uwb",
                     )
                     sts_config_found = True
                 break
@@ -1540,6 +1774,7 @@ def _phase_physical_attacks(cfg: dict, project_dir: Path) -> None:
                 "injection_authorized": True,
                 "note": "Physical UWB frame injection authorised — hardware execution required",
             },
+            ip=rtls_host, port=0, service="uwb",
         )
         (phys_dir / "physical_injection_report.txt").write_text(
             "Physical UWB frame injection test authorised.\n"
@@ -1568,6 +1803,8 @@ def _phase_network_app(cfg: dict, project_dir: Path) -> None:
     paths.  Tests MQTT for retain message attacks.  Checks for MQTT broker
     version disclosure.  Verifies TLS configuration.
     """
+    global _CURRENT_PHASE
+    _CURRENT_PHASE = "network_app"
     _check_pause()
     phase_id = "network_app"
     timeout  = cfg.get("timeout_per_phase", 300)
@@ -1644,11 +1881,18 @@ def _phase_network_app(cfg: dict, project_dir: Path) -> None:
                             header = {}
                         alg = header.get("alg", "unknown")
                         _log(f"  [*] JWT found at {ep}: alg={alg}")
-                        if alg.upper() in ("NONE", "HS256") or alg == "unknown":
-                            _log(f"  [!] JWT uses weak/none algorithm: {alg}")
+                        weak = False
+                        reason = ""
+                        if alg.upper() == "NONE":
+                            weak, reason = True, "alg=none (unsigned token)"
+                        elif alg == "unknown":
+                            weak, reason = True, "unrecognised algorithm"
+                        if weak:
+                            _log(f"  [!] JWT weakness: {reason}")
                             jwt_issues.append({
                                 "endpoint": ep,
                                 "algorithm": alg,
+                                "reason": reason,
                                 "token_preview": token[:80] + "...",
                             })
 
@@ -1656,6 +1900,11 @@ def _phase_network_app(cfg: dict, project_dir: Path) -> None:
         jwt_file.write_text(json.dumps(jwt_issues, indent=2), encoding="utf-8")
         if jwt_issues:
             _log(f"  [!] JWT weaknesses found: {len(jwt_issues)} issue(s)")
+            for issue in jwt_issues:
+                if issue["algorithm"].upper() == "NONE":
+                    _finding("AETHU-025", output_file=str(jwt_file),
+                             data={"algorithm": "none", "endpoint": issue["endpoint"]},
+                             ip=rtls_host, port=rtls_port, service="http")
 
     # ── Comprehensive API endpoint enumeration ────────────────────────────
     if base_url:
@@ -1701,6 +1950,188 @@ def _phase_network_app(cfg: dict, project_dir: Path) -> None:
         open_endpoints = [r for r in enum_results if r["status"] == 200]
         _log(f"  [*] Open endpoints found: {len(open_endpoints)}")
 
+    # ── Security headers check ───────────────────────────────────────────
+    if base_url:
+        _status(phase_id, "running", "security headers check")
+        _log("[5] Checking security response headers...")
+        resp_headers = {}
+        try:
+            req = urllib.request.Request(base_url + "/",
+                                        headers={"User-Agent": f"Aether-U/{VERSION}"})
+            if username:
+                creds_b64 = base64.b64encode(f"{username}:{password}".encode()).decode()
+                req.add_header("Authorization", f"Basic {creds_b64}")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                resp_headers = {k.lower(): v for k, v in resp.headers.items()}
+        except Exception:
+            pass
+
+        if resp_headers:
+            missing_headers = []
+            expected = {
+                "strict-transport-security": "HSTS",
+                "content-security-policy": "CSP",
+                "x-frame-options": "X-Frame-Options",
+                "x-content-type-options": "X-Content-Type-Options",
+                "x-xss-protection": "X-XSS-Protection",
+            }
+            for header, label in expected.items():
+                if header not in resp_headers:
+                    missing_headers.append(label)
+            headers_file = netapp_dir / "security_headers.json"
+            headers_file.write_text(json.dumps({
+                "present": {k: v for k, v in resp_headers.items() if k in expected},
+                "missing": missing_headers,
+            }, indent=2), encoding="utf-8")
+            if missing_headers:
+                _log(f"  [!] Missing security headers: {', '.join(missing_headers)}")
+                _finding("AETHU-020", output_file=str(headers_file),
+                         data={"missing_headers": missing_headers,
+                               "present_headers": list(resp_headers.keys())},
+                         ip=rtls_host, port=rtls_port, service="http")
+
+    # ── CORS configuration check ─────────────────────────────────────────
+    if base_url:
+        _status(phase_id, "running", "CORS configuration check")
+        _log("[5] Testing CORS configuration...")
+        cors_results = []
+        test_origins = ["https://evil.example.com", "null"]
+        api_paths_cors = ["/api/v1/tags", "/api/v1/anchors", "/api/v1/config"]
+        for ep in api_paths_cors:
+            for origin in test_origins:
+                if _shutdown.is_set():
+                    break
+                url = f"{base_url}{ep}"
+                try:
+                    req = urllib.request.Request(url, method="OPTIONS",
+                                                headers={"Origin": origin,
+                                                         "Access-Control-Request-Method": "GET"})
+                    if username:
+                        creds_b64 = base64.b64encode(f"{username}:{password}".encode()).decode()
+                        req.add_header("Authorization", f"Basic {creds_b64}")
+                    with urllib.request.urlopen(req, timeout=6) as resp:
+                        acao = resp.headers.get("Access-Control-Allow-Origin", "")
+                    if acao == "*" or acao == origin:
+                        cors_results.append({"endpoint": ep, "origin": origin, "acao": acao})
+                except Exception:
+                    pass
+        if cors_results:
+            cors_file = netapp_dir / "cors_check.json"
+            cors_file.write_text(json.dumps(cors_results, indent=2), encoding="utf-8")
+            _log(f"  [!] Permissive CORS detected on {len(cors_results)} endpoint(s)")
+            _finding("AETHU-021", output_file=str(cors_file),
+                     data={"permissive_endpoints": cors_results},
+                     ip=rtls_host, port=rtls_port, service="http")
+
+    # ── Session / cookie flag analysis ───────────────────────────────────
+    if base_url:
+        _status(phase_id, "running", "session cookie analysis")
+        _log("[5] Analysing session cookie flags...")
+        cookie_issues = []
+        auth_ep = ["/api/v1/auth", "/api/auth", "/login"]
+        for ep in auth_ep:
+            if _shutdown.is_set():
+                break
+            url = f"{base_url}{ep}"
+            try:
+                payload = json.dumps({"username": username or "admin",
+                                      "password": password or "admin"}).encode()
+                req = urllib.request.Request(url, data=payload,
+                                            headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    set_cookies = resp.headers.get_all("Set-Cookie") or []
+                for sc in set_cookies:
+                    sc_lower = sc.lower()
+                    issues = []
+                    if "httponly" not in sc_lower:
+                        issues.append("missing HttpOnly")
+                    if "secure" not in sc_lower:
+                        issues.append("missing Secure")
+                    if "samesite" not in sc_lower:
+                        issues.append("missing SameSite")
+                    if issues:
+                        cookie_issues.append({"endpoint": ep, "cookie": sc[:100],
+                                              "issues": issues})
+            except Exception:
+                pass
+        if cookie_issues:
+            cookie_file = netapp_dir / "cookie_analysis.json"
+            cookie_file.write_text(json.dumps(cookie_issues, indent=2), encoding="utf-8")
+            _log(f"  [!] Session cookie flag issues: {len(cookie_issues)}")
+            _finding("AETHU-022", output_file=str(cookie_file),
+                     data={"cookie_issues": cookie_issues},
+                     ip=rtls_host, port=rtls_port, service="http")
+
+    # ── WebSocket endpoint check ─────────────────────────────────────────
+    if base_url:
+        _status(phase_id, "running", "WebSocket endpoint check")
+        _log("[5] Probing for WebSocket endpoints...")
+        ws_paths = ["/ws", "/websocket", "/api/v1/ws", "/api/ws", "/socket.io/",
+                    "/realtime", "/stream", "/position/stream"]
+        ws_found = []
+        for ep in ws_paths:
+            if _shutdown.is_set():
+                break
+            url = f"{base_url}{ep}"
+            try:
+                req = urllib.request.Request(url, headers={
+                    "Upgrade": "websocket", "Connection": "Upgrade",
+                    "Sec-WebSocket-Version": "13",
+                    "Sec-WebSocket-Key": base64.b64encode(os.urandom(16)).decode(),
+                })
+                if username:
+                    creds_b64 = base64.b64encode(f"{username}:{password}".encode()).decode()
+                    req.add_header("Authorization", f"Basic {creds_b64}")
+                with urllib.request.urlopen(req, timeout=6) as resp:
+                    ws_found.append({"endpoint": ep, "status": resp.status})
+            except urllib.error.HTTPError as e:
+                if e.code in (101, 426):
+                    ws_found.append({"endpoint": ep, "status": e.code})
+            except Exception:
+                pass
+        if ws_found:
+            ws_file = netapp_dir / "websocket_endpoints.json"
+            ws_file.write_text(json.dumps(ws_found, indent=2), encoding="utf-8")
+            _log(f"  [*] WebSocket endpoints found: {[w['endpoint'] for w in ws_found]}")
+
+    # ── Position history / data export exposure ──────────────────────────
+    if base_url:
+        _status(phase_id, "running", "position history export exposure check")
+        _log("[5] Checking for position data export / history endpoints...")
+        export_paths = [
+            "/api/v1/reports/positions/export", "/api/v1/export/positions",
+            "/api/v1/positions/csv", "/api/v1/positions/json",
+            "/api/v1/reports/export", "/api/v1/data/export",
+            "/api/v1/tracking/history", "/api/v1/history",
+            "/export", "/reports/download",
+        ]
+        export_exposed = []
+        for ep in export_paths:
+            if _shutdown.is_set():
+                break
+            url = f"{base_url}{ep}"
+            status_code, body = _http_get(url, timeout=6,
+                                          username=username or None,
+                                          password=password or None)
+            if status_code == 200 and len(body) > 100:
+                export_exposed.append({"endpoint": ep, "status": status_code,
+                                       "body_size": len(body),
+                                       "preview": body[:200],
+                                       "authenticated": True})
+            status_anon, body_anon = _http_get(url, timeout=6)
+            if status_anon == 200 and len(body_anon) > 100:
+                export_exposed.append({"endpoint": ep + " (unauthenticated)",
+                                       "status": status_anon, "body_size": len(body_anon),
+                                       "preview": body_anon[:200],
+                                       "authenticated": False})
+        if export_exposed:
+            export_file = netapp_dir / "position_export_exposure.json"
+            export_file.write_text(json.dumps(export_exposed, indent=2), encoding="utf-8")
+            _log(f"  [!] Position data export endpoints found: {len(export_exposed)}")
+            _finding("AETHU-024", output_file=str(export_file),
+                     data={"exposed_endpoints": export_exposed},
+                     ip=rtls_host, port=rtls_port, service="http")
+
     # ── MQTT broker version disclosure ───────────────────────────────────
     if mqtt_host:
         _status(phase_id, "running", "MQTT broker version disclosure check")
@@ -1729,6 +2160,40 @@ def _phase_network_app(cfg: dict, project_dir: Path) -> None:
                     _log(f"  [*] MQTT broker version: {version_m.group(1)}")
         else:
             _log("[~] mosquitto_sub not found — MQTT version check skipped")
+
+    # ── MQTT TLS (port 8883) configuration check ────────────────────────
+    if mqtt_host:
+        _status(phase_id, "running", "MQTT TLS check")
+        _log("[5] Checking MQTT TLS (port 8883) configuration...")
+        mqtt_tls_port = 8883
+        tls_open = False
+        try:
+            sock = socket.create_connection((mqtt_host, mqtt_tls_port), timeout=5)
+            tls_open = True
+            sock.close()
+        except Exception:
+            pass
+        if not tls_open:
+            _log(f"  [!] MQTT TLS port {mqtt_tls_port} is not open — no encrypted MQTT available")
+            tls_check_file = netapp_dir / "mqtt_tls_check.txt"
+            tls_check_file.write_text(
+                f"MQTT TLS port {mqtt_tls_port} is not available on {mqtt_host}.\n"
+                f"All MQTT communication occurs over unencrypted port {mqtt_port}.\n",
+                encoding="utf-8")
+            _finding("AETHU-023", output_file=str(tls_check_file),
+                     data={"mqtt_host": mqtt_host, "tls_port": mqtt_tls_port,
+                           "tls_available": False},
+                     ip=mqtt_host, port=mqtt_tls_port, service="mqtt")
+        else:
+            _log(f"  [*] MQTT TLS port {mqtt_tls_port} is open")
+            mosquitto_sub_tls = _check_tool(tools.get("mosquitto_sub", "mosquitto_sub"))
+            if mosquitto_sub_tls:
+                cmd = [mosquitto_sub_tls, "-h", mqtt_host, "-p", str(mqtt_tls_port),
+                       "-t", "#", "-C", "1", "--quiet", "--capath", "/etc/ssl/certs/"]
+                out, rc = _run(cmd, timeout=15)
+                (netapp_dir / "mqtt_tls_check.txt").write_text(
+                    f"MQTT TLS port {mqtt_tls_port} test:\nrc={rc}\n{out[:2000]}\n",
+                    encoding="utf-8")
 
     # ── MQTT retain message attack test ──────────────────────────────────
     if mqtt_host and active_auth:
@@ -1766,7 +2231,7 @@ def _phase_network_app(cfg: dict, project_dir: Path) -> None:
         _log("[5] MQTT port 1883 in use — credentials transmitted in cleartext")
         if username:
             _finding(
-                "AETHU-010",
+                "AETHU-016",
                 output_file=str(netapp_dir / "mqtt_cleartext.txt"),
                 data={
                     "mqtt_host": mqtt_host,
@@ -1774,6 +2239,7 @@ def _phase_network_app(cfg: dict, project_dir: Path) -> None:
                     "tls_encrypted": False,
                     "cleartext_port": 1883,
                 },
+                ip=mqtt_host, port=mqtt_port, service="mqtt",
             )
             (netapp_dir / "mqtt_cleartext.txt").write_text(
                 f"MQTT cleartext credential transmission detected.\n"
@@ -1799,6 +2265,7 @@ def _phase_network_app(cfg: dict, project_dir: Path) -> None:
                 "dos_authorized": True,
                 "note": "RF flooding DoS documented — hardware execution required",
             },
+            ip=rtls_host, port=0, service="uwb",
         )
         (netapp_dir / "dos_assessment.txt").write_text(
             "RF Flooding / DoS test authorised.\n"
@@ -2009,6 +2476,17 @@ def main() -> None:
         year=((cfg.get("start_date") or "")[:4] or datetime.now(timezone.utc).strftime("%Y")),
         version=VERSION,
     )
+    # §13b: universal meta.json
+    if _us:
+        try:
+            _us.write_meta(project_dir / "meta.json", _us.make_meta(
+                tool="aether-u", version=VERSION,
+                client_short=cfg.get("client_short", ""),
+                engagement=cfg.get("engagement", ""),
+                scope="int",
+            ))
+        except Exception:
+            pass
 
     try:
         import pr0t31n_dep_snapshot as _ds
@@ -2070,12 +2548,43 @@ def main() -> None:
     # ── Finalise ──────────────────────────────────────────────────────────
     if _PAUSE:
         _PAUSE.write_stop_reason("completed", "all_phases_done")
+    # ── AETHU-011 correlation: zone boundary bypass requires Ghost Peak +
+    #    zone/ranging data exposure (combination finding) ─────────────────
+    _emitted_ids = {f.get("catalogue_id") for f in _findings_collected}
+    has_ghost_peak = "AETHU-001" in _emitted_ids
+    has_data_exposure = bool(_emitted_ids & {"AETHU-006", "AETHU-008"})
+    if has_ghost_peak and has_data_exposure:
+        _finding("AETHU-011", data={
+            "note": "Combination: Ghost Peak (AETHU-001) + zone/API data exposure "
+                    "enables zone boundary spoofing",
+            "prerequisites": ["AETHU-001", sorted(_emitted_ids & {"AETHU-006", "AETHU-008"})],
+        }, ip=cfg.get("rtls_host", ""), port=cfg.get("rtls_port", 443), service="uwb")
+
     _save_findings(project_dir)
     run_meta["finished"] = datetime.now(timezone.utc).isoformat()
     run_meta["findings_count"] = len(_findings_collected)
     (project_dir / "run_meta.json").write_text(
         json.dumps(run_meta, indent=2), encoding="utf-8"
     )
+    # §13b: universal summary.json
+    if _us:
+        try:
+            risk_counts = {}
+            for f in _findings_collected:
+                r = (f.get("risk") or "INFO").upper()
+                risk_counts[r] = risk_counts.get(r, 0) + 1
+            _us.write_summary(project_dir / "summary.json", _us.make_summary(
+                tool="aether-u", version=VERSION,
+                total_findings=len(_findings_collected),
+                risk_counts=risk_counts,
+            ))
+        except Exception:
+            pass
+    if _RUNLOG is not None:
+        try:
+            _RUNLOG.event(f"Aether-U v{VERSION} finished — {len(_findings_collected)} finding(s)")
+        except Exception:
+            pass
 
     _log(f"\n[*] Aether-U assessment complete.")
     _log(f"[*] Findings: {len(_findings_collected)}")
@@ -2084,7 +2593,8 @@ def main() -> None:
     if _findings_collected:
         _log("\n[*] Findings summary:")
         for f in _findings_collected:
-            _log(f"    [{f['severity']:8s}] {f['id']} — {f['title']}")
+            _r = f.get("risk") or f.get("severity") or "?"
+            _log(f"    [{_r:8s}] {f.get('catalogue_id', f.get('id', '?'))} — {f.get('title', '?')}")
 
 
 if __name__ == "__main__":

@@ -136,10 +136,10 @@ sudo python3 install.py --skip-git
 | # | Phase Name | Key | Description | Auth Required |
 |---|---|---|---|---|
 | 1 | `survey` | `survey` | nmap discovery, platform detection, default credential testing, REST API anchor/tag enumeration | None |
-| 2 | `protocol_analysis` | `protocol_analysis` | Passive MQTT capture, unauthenticated broker test, position data parsing, tshark capture | None (passive) |
-| 3 | `active_interaction` | `active_interaction` | MQTT injection, API unauthenticated endpoint scan, SQLi (sqlmap), XSS in tag labels, IDOR testing | `active_testing_authorized: true` |
+| 2 | `protocol_analysis` | `protocol_analysis` | Passive MQTT capture, unauthenticated broker test, position data parsing, MQTT ACL test, tshark capture | None (passive) |
+| 3 | `active_interaction` | `active_interaction` | MQTT injection, API unauthenticated endpoint scan, SQLi (sqlmap), XSS in tag labels, IDOR, CSRF check, account lockout/rate limiting | `active_testing_authorized: true` |
 | 4 | `physical_attacks` | `physical_attacks` | Ghost Peak susceptibility assessment, firmware version check via API, OTA firmware endpoint detection, physical frame injection documentation | `physical_access: true` (injection also needs `injection_authorized: true`) |
-| 5 | `network_app` | `network_app` | JWT/session token analysis, HTTP vs HTTPS check, full API enumeration, MQTT broker version disclosure, cleartext credential detection | None |
+| 5 | `network_app` | `network_app` | JWT analysis, HTTP/HTTPS check, API enumeration, security headers, CORS, session cookies, MQTT TLS, MQTT broker disclosure, position data export, cleartext credential detection | None |
 
 ---
 
@@ -162,6 +162,16 @@ sudo python3 install.py --skip-git
 | AETHU-013 | RTLS Cross-Site Scripting (XSS) in Dashboard | MEDIUM | 6.1 |
 | AETHU-014 | Insecure Direct Object Reference in RTLS API | MEDIUM | 6.5 |
 | AETHU-015 | Physical UWB Frame Injection | HIGH | 7.4 |
+| AETHU-016 | MQTT Cleartext Credential Transmission (Port 1883) | HIGH | 7.5 |
+| AETHU-017 | MQTT Topic ACL Bypass | HIGH | 8.1 |
+| AETHU-018 | Missing CSRF Protection on RTLS API | MEDIUM | 6.5 |
+| AETHU-019 | No Account Lockout or Rate Limiting | MEDIUM | 7.5 |
+| AETHU-020 | Missing Security Response Headers | LOW | 3.7 |
+| AETHU-021 | Permissive CORS Configuration | MEDIUM | 7.5 |
+| AETHU-022 | Insecure Session Cookie Flags | MEDIUM | 5.3 |
+| AETHU-023 | MQTT TLS Not Available | HIGH | 7.5 |
+| AETHU-024 | Position Data Export Exposure | HIGH | 7.5 |
+| AETHU-025 | JWT Algorithm None Accepted | CRITICAL | 9.8 |
 
 ---
 
@@ -261,10 +271,16 @@ All phase outputs are saved to the project directory:
 
 ```
 aether_u_output/
+├── meta.json                         # Universal schema metadata (§13b)
+├── findings.json                     # Universal findings (§13c v1.1)
+├── findings.csv                      # CSV mirror of findings.json
+├── findings_spectre.json             # Legacy findings (Spectre-compatible)
+├── summary.json                      # Aggregated risk statistics
 ├── run_meta.json                     # Assessment metadata
-├── findings_spectre.json             # All findings (Spectre-compatible)
+├── scan.log                          # Timestamped audit log (§14j)
+├── errors.log                        # ERROR-level entries only
 ├── survey/
-│   ├── nmap_*.xml / *.txt            # Port scan results
+│   ├── nmap_*.xml / *.txt / *.gnmap  # Port scan results (-oA trio)
 │   ├── survey_capture.pcap           # Passive tshark capture
 │   ├── default_creds.json            # Default credential findings
 │   ├── platform.txt                  # Detected RTLS platform
@@ -273,13 +289,16 @@ aether_u_output/
 │   ├── mqtt_unauth_test.txt          # Unauthenticated MQTT test result
 │   ├── mqtt_capture.txt              # Full MQTT message capture
 │   ├── mqtt_analysis.json            # Parsed tags, anchors, zones
+│   ├── mqtt_acl_test.json            # MQTT ACL test results
 │   └── uwb_gateway_capture.pcap      # UWB gateway traffic
 ├── active_interaction/
 │   ├── mqtt_injection.json           # Injection test results
 │   ├── api_unauth.json               # Unauthenticated API endpoints
 │   ├── sqlmap/                       # sqlmap output directory
 │   ├── xss_results.json              # XSS test results
-│   └── idor_results.json             # IDOR test results
+│   ├── idor_results.json             # IDOR test results
+│   ├── csrf_check.json               # CSRF token check results
+│   └── lockout_test.json             # Account lockout test results
 ├── physical_attacks/
 │   ├── ghost_peak_assessment.json    # Ghost Peak susceptibility
 │   ├── firmware_endpoints.json       # OTA update endpoints
@@ -289,6 +308,12 @@ aether_u_output/
     ├── jwt_analysis.json             # JWT/token findings
     ├── cleartext_http.txt            # HTTP exposure
     ├── api_enumeration.json          # Full API path enumeration
+    ├── security_headers.json         # Security response header check
+    ├── cors_check.json               # CORS configuration check
+    ├── cookie_analysis.json          # Session cookie flag analysis
+    ├── websocket_endpoints.json      # WebSocket endpoint discovery
+    ├── position_export_exposure.json # Position data export exposure
+    ├── mqtt_tls_check.txt            # MQTT TLS (8883) availability
     ├── mqtt_sys_topics.txt           # MQTT $SYS topics / version
     └── mqtt_cleartext.txt            # Cleartext credential finding
 ```
@@ -301,13 +326,13 @@ Aether-U emits protocol tokens to stdout when `CRUCIBLE_MANAGED=1` is set. The C
 
 | Token | Purpose |
 |---|---|
-| `__SPECTRE_LOG__ <message>` | Informational log line |
-| `__SPECTRE_ERR__ <message>` | Error message |
-| `__SPECTRE_STATUS__ <json>` | Phase status update with `phase`, `status`, `step`, `ts` |
-| `__SPECTRE_FINDING__ <json>` | Finding record with full catalogue entry data |
-| `__SPECTRE_PROMPT__ <message>` | User prompt (suppressed in managed mode) |
+| `__CRUCIBLE_LOG__:<message>` | Informational log line |
+| `__CRUCIBLE_ERR__:<message>` | Error message |
+| `__CRUCIBLE_STATUS__:<json>` | Phase status update with `phase`, `status`, `step`, `ts` |
+| `__CRUCIBLE_FINDING__:<json>` | Finding record (universal schema v1.1) |
+| `__CRUCIBLE_PROMPT__:<message>` | User prompt (suppressed in managed mode) |
 
-Finding records emitted via `__SPECTRE_FINDING__` include the full finding entry from `findings_catalogue.json` plus `data`, `output_file`, and `ts` fields.
+Finding records emitted via `__CRUCIBLE_FINDING__` conform to the universal findings schema v1.1 with all 15 required fields plus enrichment fields from the findings catalogue.
 
 ---
 
