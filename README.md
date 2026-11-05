@@ -48,7 +48,7 @@ Security testing is a professional discipline with significant ethical and legal
 > [!CAUTION]
 > **Under Development — Untested.** This tool has not been validated in production engagements. Features may be incomplete, unstable, or produce unreliable results. Do not rely on its output for deliverables without independent verification.
 
-**Version:** 1.0.0
+**Version:** 2.0.0
 **Part of the Aether family** | Integrates with Crucible via protocol tokens
 
 ---
@@ -99,7 +99,7 @@ Affected hardware: DW1000 and DW3000 chip families from Qorvo (formerly DecaWave
 - `mosquitto-clients` — MQTT subscribe/publish (`mosquitto_sub`, `mosquitto_pub`)
 - `sqlmap` — SQL injection testing
 - `curl` — HTTP/REST API interaction
-- `python3` — runtime (3.8+)
+- `python3` — runtime (3.10+)
 - `paho-mqtt` — optional Python MQTT library
 
 ### Hardware (optional — physical_attacks phase only)
@@ -114,8 +114,8 @@ Affected hardware: DW1000 and DW3000 chip families from Qorvo (formerly DecaWave
 ## Installation
 
 ```bash
-# Clone or copy Aether-U to /Users/pr0t31n/Aether-U/
-# Then install dependencies:
+# From /opt/pr0t31n/Aether-U/:
+# Install dependencies:
 
 sudo python3 install.py
 
@@ -203,7 +203,7 @@ python3 aether_u.py --list-phases
 CRUCIBLE_MANAGED=1 python3 aether_u.py --config config.json --project /tmp/rtls_audit
 ```
 
-In managed mode all output is prefixed with protocol tokens (`__SPECTRE_LOG__`, `__SPECTRE_FINDING__`, etc.) for consumption by the Crucible frontend.
+In managed mode all output is prefixed with protocol tokens (`__CRUCIBLE_LOG__`, `__CRUCIBLE_FINDING__`, etc.) for consumption by the Crucible frontend.
 
 ---
 
