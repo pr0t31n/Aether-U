@@ -53,6 +53,9 @@ Security testing is a professional discipline with significant ethical and legal
 
 ---
 
+
+> **[View full documentation on the Codex Wiki](https://wiki.pr0t31n.com/tools/aether-u)** — detailed features, CLI reference, findings catalogue, and integration guides.
+
 ## Overview
 
 Aether-U is an automated penetration testing orchestrator targeting Ultra-Wideband (UWB) and Real-Time Location System (RTLS) infrastructure. It covers the full attack surface of enterprise UWB deployments, from physical-layer ranging manipulation through to web application vulnerabilities in RTLS management consoles.
