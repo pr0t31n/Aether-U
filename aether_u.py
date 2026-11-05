@@ -527,8 +527,8 @@ def _kill_proc(proc: subprocess.Popen, wait_secs: int = 5) -> None:
 # ── Findings persistence ──────────────────────────────────────────────────────
 
 def _save_findings(output_dir: Path) -> None:
-    # §13e dual-write: universal findings.json + legacy findings_spectre.json
-    legacy = output_dir / "findings_spectre.json"
+    # §13e dual-write: universal findings.json + findings_crucible.json
+    legacy = output_dir / "findings_crucible.json"
     legacy.write_text(json.dumps(_findings_collected, indent=2), encoding="utf-8")
     if _us:
         try:
@@ -2340,7 +2340,7 @@ Examples:
   # List available phases:
   python3 aether_u.py --list-phases
 
-  # Spectre managed mode (emit protocol tokens to stdout):
+  # Crucible managed mode (emit protocol tokens to stdout):
   CRUCIBLE_MANAGED=1 python3 aether_u.py --config config.json
 """,
     )

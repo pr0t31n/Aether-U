@@ -532,7 +532,7 @@ def phase_summary(os_id: str) -> None:
     step("2. Set active_testing_authorized=true only with explicit client authorisation")
     step("3. Set physical_access=true only when physical RF testing is authorised")
     step("4. Run: python3 aether_u.py --config config.json --project ./output")
-    step("5. Review findings_spectre.json in the output directory")
+    step("5. Review findings.json in the output directory")
     print()
 
     # Check paho-mqtt import

@@ -277,7 +277,7 @@ aether_u_output/
 ├── meta.json                         # Universal schema metadata (§13b)
 ├── findings.json                     # Universal findings (§13c v1.1)
 ├── findings.csv                      # CSV mirror of findings.json
-├── findings_spectre.json             # Legacy findings (Spectre-compatible)
+├── findings_crucible.json            # Crucible-compatible findings
 ├── summary.json                      # Aggregated risk statistics
 ├── run_meta.json                     # Assessment metadata
 ├── scan.log                          # Timestamped audit log (§14j)
