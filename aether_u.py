@@ -52,6 +52,14 @@ VERSION = Path(__file__).resolve().parent.joinpath("VERSION").read_text().strip(
 # ── Protocol token configuration ─────────────────────────────────────────────
 MANAGED = os.environ.get("CRUCIBLE_MANAGED") == "1"
 
+try:
+    import sys as _sys_ie
+    if "/opt/pr0t31n/shared" not in _sys_ie.path:
+        _sys_ie.path.insert(0, "/opt/pr0t31n/shared")
+    import pr0t31n_intel_emitter as _ie
+except ImportError:
+    _ie = None
+
 _CP_LOG     = "__CRUCIBLE_LOG__"
 _CP_ERR     = "__CRUCIBLE_ERR__"
 _CP_STATUS  = "__CRUCIBLE_STATUS__"
@@ -897,6 +905,16 @@ def _phase_survey(cfg: dict, project_dir: Path) -> None:
         (survey_dir / "api_enum.json").write_text(
             json.dumps(api_results, indent=2), encoding="utf-8"
         )
+        if _ie and MANAGED and api_results:
+            try:
+                _ie.emit_intel("usb_device", {
+                    "rtls_host":     rtls_host,
+                    "rtls_port":     rtls_port,
+                    "platform":      cfg.get("rtls_platform", "unknown"),
+                    "api_endpoints": list(api_results.keys()),
+                })
+            except Exception:
+                pass
 
     # ── Check for HTTP vs HTTPS ───────────────────────────────────────────
     if rtls_host:
@@ -1103,6 +1121,19 @@ def _phase_protocol_analysis(cfg: dict, project_dir: Path) -> None:
         }
         analysis_file = proto_dir / "mqtt_analysis.json"
         analysis_file.write_text(json.dumps(analysis, indent=2), encoding="utf-8")
+        if _ie and MANAGED:
+            try:
+                _ie.emit_intel("usb_device", {
+                    "mqtt_host":        mqtt_host,
+                    "mqtt_port":        mqtt_port,
+                    "tag_ids":          sorted(tag_ids),
+                    "anchor_ids":       sorted(anchor_ids),
+                    "zone_ids":         sorted(zone_ids),
+                    "ranging_exposed":  ranging_exposed,
+                    "total_messages":   len(all_messages),
+                })
+            except Exception:
+                pass
         _log(f"  Tags found: {sorted(tag_ids)}")
         _log(f"  Anchors found: {sorted(anchor_ids)}")
         _log(f"  Zones found: {sorted(zone_ids)}")
@@ -1256,6 +1287,16 @@ def _phase_active_interaction(cfg: dict, project_dir: Path) -> None:
 
         inj_file = active_dir / "mqtt_injection.json"
         inj_file.write_text(json.dumps(injection_results, indent=2), encoding="utf-8")
+        if _ie and MANAGED and injection_results:
+            try:
+                _ie.emit_intel("usb_device", {
+                    "mqtt_host":          mqtt_host,
+                    "mqtt_port":          mqtt_port,
+                    "injection_results":  len(injection_results),
+                    "successful":         sum(1 for r in injection_results if r["rc"] == 0),
+                })
+            except Exception:
+                pass
 
         # If any injection succeeded (rc=0), emit the finding
         if any(r["rc"] == 0 for r in injection_results):
