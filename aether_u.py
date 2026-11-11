@@ -165,16 +165,19 @@ _CURRENT_PHASE = ""
 
 def _init_fdb():
     global _fdb
-    _db_path = os.environ.get("PR0T31N_FINDINGS_DB")
-    if _db_path:
-        try:
-            import sys as _s
-            if "/opt/pr0t31n/shared" not in _s.path:
-                _s.path.insert(0, "/opt/pr0t31n/shared")
-            import pr0t31n_findings_db
-            _fdb = pr0t31n_findings_db.FindingsDB(_db_path)
-        except Exception:
-            pass
+    _db_path = os.environ.get("PR0T31N_FINDINGS_DB") or (str(_RUN_DIR / "findings.db") if _RUN_DIR else None)
+    if not _db_path:
+        return
+    try:
+        import sys as _s
+        if "/opt/pr0t31n/shared" not in _s.path:
+            _s.path.insert(0, "/opt/pr0t31n/shared")
+        import pr0t31n_findings_db
+        _fdb = pr0t31n_findings_db.FindingsDB(_db_path)
+    except Exception:
+        pass
+    if _fdb and _ie:
+        _ie.init_db(_fdb)
 
 
 # ── Scope enforcement state ───────────────────────────────────────────────────
@@ -902,10 +905,7 @@ def _phase_survey(cfg: dict, project_dir: Path) -> None:
                         ip=rtls_host, port=rtls_port, service="rtls-http",
                     )
 
-        (survey_dir / "api_enum.json").write_text(
-            json.dumps(api_results, indent=2), encoding="utf-8"
-        )
-        if _ie and MANAGED and api_results:
+        if _ie and api_results:
             try:
                 _ie.emit_intel("usb_device", {
                     "rtls_host":     rtls_host,
@@ -915,6 +915,9 @@ def _phase_survey(cfg: dict, project_dir: Path) -> None:
                 })
             except Exception:
                 pass
+        (survey_dir / "api_enum.json").write_text(
+            json.dumps(api_results, indent=2), encoding="utf-8"
+        )
 
     # ── Check for HTTP vs HTTPS ───────────────────────────────────────────
     if rtls_host:
@@ -1120,8 +1123,7 @@ def _phase_protocol_analysis(cfg: dict, project_dir: Path) -> None:
             "total_messages": len(all_messages),
         }
         analysis_file = proto_dir / "mqtt_analysis.json"
-        analysis_file.write_text(json.dumps(analysis, indent=2), encoding="utf-8")
-        if _ie and MANAGED:
+        if _ie:
             try:
                 _ie.emit_intel("usb_device", {
                     "mqtt_host":        mqtt_host,
@@ -1134,6 +1136,7 @@ def _phase_protocol_analysis(cfg: dict, project_dir: Path) -> None:
                 })
             except Exception:
                 pass
+        analysis_file.write_text(json.dumps(analysis, indent=2), encoding="utf-8")
         _log(f"  Tags found: {sorted(tag_ids)}")
         _log(f"  Anchors found: {sorted(anchor_ids)}")
         _log(f"  Zones found: {sorted(zone_ids)}")
@@ -1286,8 +1289,7 @@ def _phase_active_interaction(cfg: dict, project_dir: Path) -> None:
             injection_results.append({"topic": topic, "rc": rc, "output": out[:200]})
 
         inj_file = active_dir / "mqtt_injection.json"
-        inj_file.write_text(json.dumps(injection_results, indent=2), encoding="utf-8")
-        if _ie and MANAGED and injection_results:
+        if _ie and injection_results:
             try:
                 _ie.emit_intel("usb_device", {
                     "mqtt_host":          mqtt_host,
@@ -1297,6 +1299,7 @@ def _phase_active_interaction(cfg: dict, project_dir: Path) -> None:
                 })
             except Exception:
                 pass
+        inj_file.write_text(json.dumps(injection_results, indent=2), encoding="utf-8")
 
         # If any injection succeeded (rc=0), emit the finding
         if any(r["rc"] == 0 for r in injection_results):
@@ -2448,7 +2451,6 @@ def main() -> None:
         sys.exit(0)
 
     _load_catalogue()
-    _init_fdb()
 
     config_path = Path(args.config)
     cfg = _load_config(config_path)
@@ -2464,6 +2466,7 @@ def main() -> None:
     project_dir.mkdir(parents=True, exist_ok=True)
     global _RUN_DIR
     _RUN_DIR = project_dir
+    _init_fdb()
     # §13b/§14j/§14k: canonical run-dir audit log + own-version startup EVENT.
     global _RUNLOG
     if _el is not None:
